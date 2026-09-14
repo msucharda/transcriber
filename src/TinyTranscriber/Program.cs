@@ -9,8 +9,9 @@ static class Program
 
         try
         {
-            using var consoleLifetime = ConsoleLifetime.AttachToParent(Application.Exit);
-            Application.Run(new DictationApplicationContext());
+            using var context = new DictationApplicationContext();
+            using var consoleLifetime = ConsoleLifetime.AttachToParent(context.RequestExit);
+            Application.Run(context);
         }
         catch (Exception exception)
         {

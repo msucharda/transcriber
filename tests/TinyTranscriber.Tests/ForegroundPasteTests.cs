@@ -120,6 +120,8 @@ public sealed class ForegroundPasteTests
             return ActivationAllowed;
         }
 
+        public bool AreModifiersReleased() => true;
+
         public void SendPaste()
         {
             Assert.True(TargetExists);

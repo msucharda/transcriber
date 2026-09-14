@@ -2,122 +2,222 @@ using NAudio.Wave;
 
 namespace TinyTranscriber;
 
-internal sealed class AudioRecorder : IDisposable
+internal sealed class AudioRecorder(
+    Func<IWaveIn>? createInput = null,
+    string? temporaryDirectory = null) : IParagraphRecorder
 {
-    private WaveInEvent? waveIn;
-    private WaveFileWriter? writer;
-    private TaskCompletionSource<string>? stopped;
-    private string? outputPath;
+    private readonly object gate = new();
+    private Capture? capture;
+    private Capture? finishedCapture;
+    private bool disposed;
 
-    public bool IsRecording => waveIn is not null;
+    public bool IsRecording
+    {
+        get { lock (gate) { return capture is not null; } }
+    }
 
     public event Action<float>? LevelChanged;
 
     public void Start()
     {
-        if (IsRecording)
+        lock (gate)
         {
-            throw new InvalidOperationException("Recording is already in progress.");
-        }
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (capture is not null || finishedCapture is not null)
+            {
+                throw new InvalidOperationException("Recording is already in progress.");
+            }
 
-        outputPath = Path.Combine(Path.GetTempPath(), $"tiny-transcriber-{Guid.NewGuid():N}.wav");
-        writer = new WaveFileWriter(outputPath, new WaveFormat(16000, 16, 1));
-        stopped = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        waveIn = new WaveInEvent
-        {
-            WaveFormat = writer.WaveFormat,
-            BufferMilliseconds = 100
-        };
-        waveIn.DataAvailable += OnDataAvailable;
-        waveIn.RecordingStopped += OnRecordingStopped;
+            var input = createInput?.Invoke() ?? new WaveInEvent { BufferMilliseconds = 100 };
+            var path = Path.Combine(
+                temporaryDirectory ?? Path.GetTempPath(), $"tiny-transcriber-{Guid.NewGuid():N}.wav");
+            try
+            {
+                input.WaveFormat = new WaveFormat(16000, 16, 1);
+                capture = new Capture(input, new WaveFileWriter(path, input.WaveFormat), path);
+                input.DataAvailable += OnDataAvailable;
+                input.RecordingStopped += OnRecordingStopped;
+                input.StartRecording();
+            }
+            catch
+            {
+                if (capture is not null)
+                {
+                    Detach(capture);
+                    capture.Writer.Dispose();
+                    capture.Completion.TrySetCanceled();
+                    capture = null;
+                }
 
-        try
-        {
-            waveIn.StartRecording();
-        }
-        catch
-        {
-            CleanupRecording();
-            DeleteOutput();
-            throw;
+                input.Dispose();
+                File.Delete(path);
+                throw;
+            }
         }
     }
 
     public Task<string> StopAsync()
     {
-        if (waveIn is null || stopped is null)
+        Capture current;
+        lock (gate)
         {
-            throw new InvalidOperationException("No recording is in progress.");
+            if (finishedCapture is not null)
+            {
+                var finished = finishedCapture.Completion.Task;
+                finishedCapture = null;
+                return finished;
+            }
+
+            current = capture ?? throw new InvalidOperationException("No recording is in progress.");
+            if (current.StopRequested)
+            {
+                return current.Completion.Task;
+            }
+
+            current.StopRequested = true;
         }
 
-        var completion = stopped.Task;
-        waveIn.StopRecording();
+        var completion = current.Completion.Task;
+        current.Input.StopRecording();
         return completion;
     }
 
     public void Dispose()
     {
-        if (waveIn is not null)
+        Capture? current;
+        Capture? finished;
+        lock (gate)
         {
-            waveIn.StopRecording();
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            current = capture;
+            finished = finishedCapture;
+            capture = null;
+            finishedCapture = null;
+            if (current is not null)
+            {
+                Detach(current);
+                current.Completion.TrySetCanceled();
+                current.Writer.Dispose();
+            }
         }
 
-        CleanupRecording();
-        DeleteOutput();
+        if (finished is not null)
+        {
+            File.Delete(finished.Path);
+        }
+
+        if (current is not null)
+        {
+            try
+            {
+                current.Input.Dispose();
+            }
+            finally
+            {
+                File.Delete(current.Path);
+            }
+        }
     }
 
     private void OnDataAvailable(object? sender, WaveInEventArgs eventArgs)
     {
-        writer?.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
-        writer?.Flush();
+        Capture current;
+        lock (gate)
+        {
+            if (capture is null || sender != capture.Input)
+            {
+                return;
+            }
+
+            current = capture;
+            try
+            {
+                current.Writer.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
+                current.Writer.Flush();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                current.Failure = exception;
+            }
+        }
+
+        if (current.Failure is not null)
+        {
+            current.Input.StopRecording();
+            return;
+        }
+
         LevelChanged?.Invoke(
             AudioLevelCalculator.Calculate(eventArgs.Buffer.AsSpan(0, eventArgs.BytesRecorded)));
     }
 
     private void OnRecordingStopped(object? sender, StoppedEventArgs eventArgs)
     {
-        var path = outputPath;
-        var completion = stopped;
-        CleanupRecording();
-
-        if (completion is null || path is null)
+        Capture current;
+        lock (gate)
         {
-            return;
+            if (capture is null || sender != capture.Input)
+            {
+                return;
+            }
+
+            current = capture;
+            capture = null;
+            if (!current.StopRequested)
+            {
+                finishedCapture = current;
+            }
+
+            Detach(current);
         }
 
-        if (eventArgs.Exception is not null)
+        try
         {
-            DeleteOutput();
-            completion.TrySetException(eventArgs.Exception);
-            return;
-        }
+            current.Writer.Dispose();
+            current.Input.Dispose();
+            var failure = current.Failure ?? eventArgs.Exception;
+            if (failure is not null)
+            {
+                throw failure;
+            }
 
-        outputPath = null;
-        completion.TrySetResult(path);
+            // The completed task now owns this WAV, not this recorder or a later capture.
+            current.Completion.TrySetResult(current.Path);
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                File.Delete(current.Path);
+            }
+            catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
+            {
+                exception = new AggregateException(exception, cleanupException);
+            }
+
+            current.Completion.TrySetException(exception);
+        }
     }
 
-    private void CleanupRecording()
+    private void Detach(Capture current)
     {
-        if (waveIn is not null)
-        {
-            waveIn.DataAvailable -= OnDataAvailable;
-            waveIn.RecordingStopped -= OnRecordingStopped;
-            waveIn.Dispose();
-            waveIn = null;
-        }
-
-        writer?.Dispose();
-        writer = null;
-        stopped = null;
+        current.Input.DataAvailable -= OnDataAvailable;
+        current.Input.RecordingStopped -= OnRecordingStopped;
     }
 
-    private void DeleteOutput()
+    private sealed class Capture(IWaveIn input, WaveFileWriter writer, string path)
     {
-        if (outputPath is not null && File.Exists(outputPath))
-        {
-            File.Delete(outputPath);
-        }
-
-        outputPath = null;
+        public IWaveIn Input { get; } = input;
+        public WaveFileWriter Writer { get; } = writer;
+        public string Path { get; } = path;
+        public bool StopRequested { get; set; }
+        public Exception? Failure { get; set; }
+        public TaskCompletionSource<string> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

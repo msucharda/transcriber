@@ -10,9 +10,13 @@ internal sealed class WaveformControl : Control
     private float displayedLevel;
     private float phase;
     private WaveformMode mode;
+    private readonly bool decorativeMotion;
+    private readonly bool highContrast;
 
-    public WaveformControl()
+    public WaveformControl(bool decorativeMotion = true, bool highContrast = false)
     {
+        this.decorativeMotion = decorativeMotion;
+        this.highContrast = highContrast;
         DoubleBuffered = true;
         SetStyle(
             ControlStyles.AllPaintingInWmPaint
@@ -33,8 +37,13 @@ internal sealed class WaveformControl : Control
 
     public void StartRecording()
     {
+        if (mode == WaveformMode.Recording)
+        {
+            return;
+        }
+
         mode = WaveformMode.Recording;
-        AccentColor = Color.FromArgb(255, 111, 97);
+        AccentColor = highContrast ? SystemColors.WindowText : Color.FromArgb(255, 111, 97);
         targetLevel = 0.08f;
         displayedLevel = 0.08f;
         StartAnimation();
@@ -42,8 +51,13 @@ internal sealed class WaveformControl : Control
 
     public void StartTranscribing()
     {
+        if (mode == WaveformMode.Transcribing)
+        {
+            return;
+        }
+
         mode = WaveformMode.Transcribing;
-        AccentColor = Color.FromArgb(111, 181, 255);
+        AccentColor = highContrast ? SystemColors.WindowText : Color.FromArgb(111, 181, 255);
         targetLevel = 0;
         displayedLevel = 0;
         StartAnimation();
@@ -134,7 +148,15 @@ internal sealed class WaveformControl : Control
     private void StartAnimation()
     {
         phase = 0;
-        animationTimer.Start();
+        if (mode == WaveformMode.Recording || decorativeMotion)
+        {
+            animationTimer.Start();
+        }
+        else
+        {
+            animationTimer.Stop();
+        }
+
         Invalidate();
     }
 

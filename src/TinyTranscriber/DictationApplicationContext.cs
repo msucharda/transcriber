@@ -1,5 +1,4 @@
 using Azure.Identity;
-using System.Media;
 
 namespace TinyTranscriber;
 
@@ -10,40 +9,79 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private readonly TrayIcons trayIcons;
     private readonly HotkeyDefinition hotkey = HotkeyDefinition.Load();
     private readonly StatusForm statusForm = new();
-    private readonly AudioRecorder recorder = new();
+    private readonly Control dispatcher = new();
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromMinutes(2) };
-    private readonly CancellationTokenSource shutdown = new();
     private readonly MaiTranscriptionClient transcriptionClient;
-    private bool exiting;
-    private DictationState state;
+    private readonly ParagraphQueue queue;
+    private readonly System.Windows.Forms.Timer resumeTimer = new() { Interval = 3000 };
+    private readonly ToolStripMenuItem queueItem = new() { Enabled = false };
+    private readonly ToolStripMenuItem pauseItem = new("Pause automatic delivery");
+    private readonly ToolStripMenuItem copyItem = new("Copy ready paragraphs (pauses)");
+    private readonly ToolStripMenuItem acknowledgeItem = new("I pasted the copied paragraphs");
+    private readonly ToolStripMenuItem resumeItem = new("Resume delivery in 3 seconds");
+    private readonly ToolStripMenuItem retryItem = new("Retry failed paragraph");
+    private readonly ToolStripMenuItem discardItem = new("Discard failed recording...");
+    private readonly ToolStripMenuItem exitItem = new("Exit");
+    private AudioRecorder? activeRecorder;
+    private volatile bool exiting;
 
     public DictationApplicationContext()
     {
+        _ = dispatcher.Handle;
         transcriptionClient = new MaiTranscriptionClient(httpClient, new DefaultAzureCredential());
+        queue = new ParagraphQueue(CreateRecorder, TranscribeAsync, new WindowsDelivery(), File.Delete);
         hotkeyWindow = new HotkeyWindow(hotkey);
         trayIcons = new TrayIcons();
-        var exitItem = new ToolStripMenuItem("Exit");
-        exitItem.Click += (_, _) => ExitThread();
-
         notifyIcon = new NotifyIcon
         {
             Icon = trayIcons.Idle,
-            Text = $"Tiny Transcriber - {hotkey.DisplayName} to record",
             ContextMenuStrip = new ContextMenuStrip(),
             Visible = true
         };
-        notifyIcon.ContextMenuStrip.Items.Add(exitItem);
+        notifyIcon.ContextMenuStrip.Items.AddRange(
+        [
+            queueItem, new ToolStripSeparator(), pauseItem, copyItem, acknowledgeItem, resumeItem,
+            new ToolStripSeparator(), retryItem, discardItem, new ToolStripSeparator(), exitItem
+        ]);
 
+        pauseItem.Click += (_, _) => { CancelResume(); queue.PauseDelivery(); };
+        copyItem.Click += (_, _) => { CancelResume(); queue.CopyReadyParagraphs(); };
+        acknowledgeItem.Click += (_, _) => { CancelResume(); queue.AcknowledgeCopiedParagraphs(); };
+        resumeItem.Click += (_, _) => { resumeTimer.Start(); RefreshStatus(); };
+        retryItem.Click += (_, _) => queue.RetryFailedParagraph();
+        discardItem.Click += (_, _) =>
+        {
+            CancelResume();
+            queue.PauseDelivery();
+            if (MessageBox.Show(
+                "Delete the failed recording? This cannot be undone. Other paragraphs will stay paused.",
+                "Discard failed recording",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) == DialogResult.Yes)
+            {
+                queue.DiscardFailedParagraph();
+            }
+        };
+        exitItem.Click += (_, _) => ExitThread();
+        resumeTimer.Tick += (_, _) =>
+        {
+            resumeTimer.Stop();
+            queue.ResumeDelivery();
+        };
+        queue.Changed += RefreshStatus;
+        queue.Error += OnQueueError;
         hotkeyWindow.Pressed += OnHotkeyPressed;
-        recorder.LevelChanged += OnAudioLevelChanged;
-
+        RefreshStatus();
         ShowMessage(
             "Tiny Transcriber is ready",
-            $"Press {hotkey.DisplayName} to start recording, then press it again to transcribe and paste.",
+            $"Press {hotkey.DisplayName} to start or stop a paragraph. You can record the next while one transcribes.",
             ToolTipIcon.Info);
     }
 
-    protected override void ExitThreadCore()
+    public void RequestExit() => Dispatch(ExitThread);
+
+    protected override async void ExitThreadCore()
     {
         if (exiting)
         {
@@ -51,141 +89,149 @@ internal sealed class DictationApplicationContext : ApplicationContext
         }
 
         exiting = true;
-        shutdown.Cancel();
+        resumeTimer.Stop();
+        resumeTimer.Dispose();
         hotkeyWindow.Pressed -= OnHotkeyPressed;
-        recorder.LevelChanged -= OnAudioLevelChanged;
         hotkeyWindow.Dispose();
-        recorder.Dispose();
-        statusForm.Dispose();
+        queue.Changed -= RefreshStatus;
+        queue.Error -= OnQueueError;
+        statusForm.HideStatus();
         notifyIcon.Visible = false;
-        notifyIcon.Dispose();
-        trayIcons.Dispose();
-        httpClient.Dispose();
-        shutdown.Dispose();
-        base.ExitThreadCore();
-    }
-
-    private async void OnHotkeyPressed(object? sender, EventArgs eventArgs)
-    {
         try
         {
-            switch (state)
-            {
-                case DictationState.Idle:
-                    StartRecording();
-                    break;
-                case DictationState.Recording:
-                    await StopTranscribeAndPasteAsync();
-                    break;
-                case DictationState.Transcribing:
-                    SystemSounds.Beep.Play();
-                    break;
-            }
-        }
-        catch (OperationCanceledException) when (exiting)
-        {
-            // Exiting cancels pending requests without pasting into another application.
+            // Keep the UI context alive while canceled requests release their WAV streams.
+            await queue.ShutdownAsync();
         }
         catch (Exception exception)
         {
-            if (!exiting)
-            {
-                SetState(DictationState.Idle);
-                statusForm.HideStatus();
-                ShowMessage("Dictation failed", exception.Message, ToolTipIcon.Error);
-            }
+            Console.Error.WriteLine($"Shutdown cleanup failed: {exception.Message}");
+        }
+        finally
+        {
+            statusForm.Dispose();
+            notifyIcon.ContextMenuStrip?.Dispose();
+            notifyIcon.Dispose();
+            trayIcons.Dispose();
+            httpClient.Dispose();
+            dispatcher.Dispose();
+            base.ExitThreadCore();
         }
     }
 
-    private void StartRecording()
+    private void OnHotkeyPressed(object? sender, EventArgs eventArgs)
+    {
+        if (exiting)
+        {
+            return;
+        }
+
+        var result = queue.HandleHotkey(NativeInput.GetActiveWindow);
+        if (result == HotkeyResult.Full)
+        {
+            ShowMessage(
+                "Both paragraph slots are busy",
+                "Wait for a paragraph to finish, or recover pending work from the tray. Your accepted audio is kept.",
+                ToolTipIcon.Info);
+        }
+    }
+
+    private IParagraphRecorder CreateRecorder()
     {
         if (!AppSettings.TryLoad(out _, out var error))
         {
             throw new InvalidOperationException(error);
         }
 
-        recorder.Start();
-        SetState(DictationState.Recording);
-        statusForm.ShowRecording(hotkey.DisplayName);
-        SystemSounds.Asterisk.Play();
+        var source = new AudioRecorder();
+        activeRecorder = source;
+        source.LevelChanged += level => Dispatch(() =>
+        {
+            if (ReferenceEquals(activeRecorder, source)
+                && queue.Status.Microphone == MicrophoneState.Recording)
+            {
+                statusForm.SetAudioLevel(level);
+            }
+        });
+        return source;
     }
 
-    private async Task StopTranscribeAndPasteAsync()
+    private Task<string> TranscribeAsync(string audioPath, CancellationToken token)
     {
-        SetState(DictationState.Transcribing);
-        statusForm.ShowTranscribing();
-        var targetWindow = NativeInput.GetActiveWindow();
-        var cancellationToken = shutdown.Token;
-        string? audioPath = null;
-
-        try
+        if (!AppSettings.TryLoad(out var settings, out var error) || settings is null)
         {
-            audioPath = await recorder.StopAsync();
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (!AppSettings.TryLoad(out var settings, out var error) || settings is null)
-            {
-                throw new InvalidOperationException(error);
-            }
-
-            var transcript = await transcriptionClient.TranscribeAsync(audioPath, settings, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            Clipboard.SetText(transcript);
-            if (await NativeInput.TryPasteAsync(targetWindow, cancellationToken))
-            {
-                SystemSounds.Exclamation.Play();
-            }
-            else
-            {
-                ShowMessage(
-                    "Transcript copied, not pasted",
-                    "The destination window could not be verified. Select the intended field and press Ctrl+V.",
-                    ToolTipIcon.Warning);
-            }
+            throw new InvalidOperationException(error);
         }
-        finally
-        {
-            if (audioPath is not null && File.Exists(audioPath))
-            {
-                File.Delete(audioPath);
-            }
 
-            if (!exiting)
-            {
-                SetState(DictationState.Idle);
-                statusForm.HideStatus();
-            }
-        }
+        return transcriptionClient.TranscribeAsync(audioPath, settings, token);
     }
 
-    private void SetState(DictationState nextState)
+    private void RefreshStatus()
     {
-        var (icon, text) = nextState switch
+        if (exiting)
         {
-            DictationState.Idle => (trayIcons.Idle, $"Tiny Transcriber - {hotkey.DisplayName} to record"),
-            DictationState.Recording => (trayIcons.Recording, "Tiny Transcriber - recording"),
-            DictationState.Transcribing => (trayIcons.Transcribing, "Tiny Transcriber - transcribing"),
-            _ => throw new ArgumentOutOfRangeException(nameof(nextState))
-        };
-        state = nextState;
-        notifyIcon.Icon = icon;
-        notifyIcon.Text = text;
+            return;
+        }
+
+        var status = queue.Status;
+        var presentation = DictationPresentation.From(status, hotkey.DisplayName, resumeTimer.Enabled);
+        notifyIcon.Icon = presentation.Recording
+            ? trayIcons.Recording
+            : presentation.Processing ? trayIcons.Transcribing : trayIcons.Idle;
+        notifyIcon.Text = $"Tiny Transcriber - {presentation.Title} - {status.Unfinished}/{status.Capacity}";
+        statusForm.UpdateStatus(presentation);
+        queueItem.Text = $"{status.Unfinished}/{status.Capacity} unfinished paragraphs";
+        pauseItem.Enabled = !status.DeliveryPaused || resumeTimer.Enabled;
+        copyItem.Enabled = status.CanCopy;
+        acknowledgeItem.Enabled = status.CanAcknowledgeCopy;
+        resumeItem.Enabled = status.DeliveryPaused && !status.CanAcknowledgeCopy && !resumeTimer.Enabled;
+        retryItem.Enabled = status.HasFailure;
+        discardItem.Enabled = status.HasFailure;
+        exitItem.Text = status.Unfinished > 0 ? "Exit (discard pending work)" : "Exit";
     }
+
+    private void CancelResume()
+    {
+        resumeTimer.Stop();
+    }
+
+    private void OnQueueError(string title, string message) => ShowMessage(title, message, ToolTipIcon.Warning);
 
     private void ShowMessage(string title, string text, ToolTipIcon icon)
     {
-        notifyIcon.ShowBalloonTip(5000, title, text, icon);
+        if (!exiting)
+        {
+            notifyIcon.ShowBalloonTip(5000, title, text, icon);
+        }
     }
 
-    private void OnAudioLevelChanged(float level)
+    private void Dispatch(Action action)
     {
-        statusForm.SetAudioLevel(level);
+        if (exiting)
+        {
+            return;
+        }
+
+        try
+        {
+            if (dispatcher.InvokeRequired)
+            {
+                dispatcher.BeginInvoke(() => { if (!exiting) { action(); } });
+            }
+            else
+            {
+                action();
+            }
+        }
+        catch (InvalidOperationException) when (exiting)
+        {
+            // An already-posted meter/console callback can race with dispatcher disposal.
+        }
     }
 
-    private enum DictationState
+    private sealed class WindowsDelivery : IParagraphDelivery
     {
-        Idle,
-        Recording,
-        Transcribing
+        public Task<bool> TryDeliverAsync(nint target, string text, CancellationToken cancellationToken) =>
+            NativeInput.TryDeliverAsync(target, text, cancellationToken);
+        public void Copy(string text) => Clipboard.SetText(text);
     }
 }
