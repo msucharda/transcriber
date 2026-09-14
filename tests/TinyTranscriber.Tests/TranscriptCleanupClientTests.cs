@@ -29,7 +29,7 @@ public sealed class TranscriptCleanupClientTests
         Assert.Equal("dictation-cleanup", root.GetProperty("model").GetString());
         Assert.Equal("none", root.GetProperty("reasoning_effort").GetString());
         Assert.False(root.GetProperty("store").GetBoolean());
-        Assert.Equal(4096, root.GetProperty("max_completion_tokens").GetInt32());
+        Assert.Equal(TranscriptCleanupClient.OutputTokenLimit(original), root.GetProperty("max_completion_tokens").GetInt32());
         Assert.False(root.TryGetProperty("temperature", out _));
         Assert.False(root.TryGetProperty("tools", out _));
         var messages = root.GetProperty("messages");
@@ -141,6 +141,22 @@ public sealed class TranscriptCleanupClientTests
     {
         const string text = "Použij `GetUserAsync()`.\nŘekl: \"No, to je jako včera.\"";
         Assert.Equal(text, TranscriptCleanupClient.Parse(ResponseFor(new { text })));
+    }
+
+    [Theory]
+    [InlineData(1, 512)]
+    [InlineData(100, 512)]
+    [InlineData(500, 1128)]
+    [InlineData(3000, 4096)]
+    public void BoundsOutputBudgetForShortAndLongDictation(int length, int expected)
+    {
+        Assert.Equal(expected, TranscriptCleanupClient.OutputTokenLimit(new string('a', length)));
+    }
+
+    [Fact]
+    public void OutputBudgetAccountsForCzechUtf8Characters()
+    {
+        Assert.Equal(1328, TranscriptCleanupClient.OutputTokenLimit(new string('č', 300)));
     }
 
     private static AppSettings Settings() =>

@@ -91,7 +91,8 @@ Cleanup sends the transcript to Azure in addition to the audio already sent to
 Speech, adds latency and token charges, and uses the same Entra identity or
 explicitly configured key. Requests do not enable stored completions (`store:
 false`); Azure's normal service/abuse-monitoring policies still apply.
-Cleanup has a 30-second timeout and a 4,096-token output cap. On an HTTP/auth
+Cleanup has a 30-second timeout and an input-sized output budget capped at 4,096
+tokens (short dictations reserve less of the deployment's rate limit). On an HTTP/auth
 failure, timeout, empty response, refusal, malformed response, or truncated output,
 the app uses the original transcript and shows a warning instead of silently
 losing the dictation. It does not automatically retry or duplicate the paste.
@@ -147,7 +148,7 @@ dotnet test .\TinyTranscriber.slnx --configuration Release
 
 The live text-cleanup check is skipped by default. To exercise the real app client
 against your configured Azure deployment with synthetic Czech/English samples
-(billable; allow about three minutes for rate-limit spacing):
+(billable; allow about two minutes for rate-limit spacing):
 
 ```powershell
 $env:TINY_TRANSCRIBER_LIVE_TESTS = "1"
