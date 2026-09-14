@@ -218,13 +218,12 @@ internal sealed class StatusForm : Form
 
     private void ShowStatus()
     {
-        var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
-        Location = new Point(
-            workingArea.Left + ((workingArea.Width - Width) / 2),
-            workingArea.Bottom - Height - 24);
-
         if (!Visible)
         {
+            var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Location = new Point(
+                workingArea.Left + ((workingArea.Width - Width) / 2),
+                workingArea.Bottom - Height - 24);
             Show();
         }
 

@@ -326,6 +326,24 @@ public sealed class ParagraphQueueTests
         }
     }
 
+    [Fact]
+    public async Task ImmediateResumeAfterPauseWaitsForCanceledDeliveryToUnwind()
+    {
+        await using var fixture = new Fixture();
+        fixture.Delivery.DelayPaste = true;
+        fixture.StartAndStop();
+        fixture.Requests[0].Complete("One.");
+        await Until(() => fixture.Delivery.Attempts == 1);
+        fixture.Queue.PauseDelivery();
+        fixture.Queue.ResumeDelivery();
+        await Until(() => fixture.Delivery.Attempts == 2);
+        fixture.Delivery.ReleasePaste();
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Single(fixture.Delivery.Pastes);
+        Assert.Empty(fixture.Errors);
+        Assert.False(fixture.Queue.Status.DeliveryPaused);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public ParagraphQueue Queue { get; }

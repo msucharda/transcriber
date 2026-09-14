@@ -123,7 +123,8 @@ public sealed class StatusFormTests
                 Status(transcribing: true),
                 Status() with { DeliveryPaused = true },
                 Status() with { HasFailure = true },
-                Status(MicrophoneState.Stopping) with { StartPending = true }
+                Status(MicrophoneState.Stopping) with { StartPending = true },
+                Status(transcribing: true, unfinished: 1)
             };
             var directory = Environment.GetEnvironmentVariable("TINY_TRANSCRIBER_TEST_RENDER_DIRECTORY");
             for (var index = 0; index < statuses.Length; index++)
@@ -133,6 +134,12 @@ public sealed class StatusFormTests
                 form.Scale(new SizeF(scale, scale));
                 foreach (var label in form.Controls.OfType<Label>())
                 {
+                    if (scale != 1)
+                    {
+                        var previousFont = label.Font;
+                        label.Font = new Font(previousFont.FontFamily, previousFont.Size * scale, previousFont.Style);
+                        previousFont.Dispose();
+                    }
                     var measured = TextRenderer.MeasureText(label.Text, label.Font, Size.Empty,
                         TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
                     Assert.True(measured.Width <= label.ClientSize.Width,
@@ -167,6 +174,10 @@ public sealed class StatusFormTests
                 }
 
                 Assert.False(form.Visible);
+                var titleBounds = form.Controls["StatusTitle"]!.Bounds;
+                Assert.True(Enumerable.Range(titleBounds.Left, titleBounds.Width).Any(x =>
+                    Enumerable.Range(titleBounds.Top, titleBounds.Height).Any(y => image.GetPixel(x, y).R > 150)),
+                    "The offscreen render must actually include the title text.");
                 if (directory is not null)
                 {
                     Directory.CreateDirectory(directory);
@@ -191,9 +202,14 @@ public sealed class StatusFormTests
         Exception? failure = null;
         var thread = new Thread(() =>
         {
-            try { action(); }
+            try
+            {
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException, threadScope: true);
+                action();
+            }
             catch (Exception exception) { failure = exception; }
         });
+        thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "Offscreen UI test did not finish.");

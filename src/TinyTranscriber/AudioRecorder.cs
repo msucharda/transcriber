@@ -8,8 +8,9 @@ internal sealed class AudioRecorder(
 {
     private readonly object gate = new();
     private Capture? capture;
+    private Capture? closingCapture;
     private Capture? finishedCapture;
-    private bool disposed;
+    private volatile bool disposed;
 
     public bool IsRecording
     {
@@ -23,7 +24,7 @@ internal sealed class AudioRecorder(
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            if (capture is not null || finishedCapture is not null)
+            if (capture is not null || closingCapture is not null || finishedCapture is not null)
             {
                 throw new InvalidOperationException("Recording is already in progress.");
             }
@@ -39,18 +40,27 @@ internal sealed class AudioRecorder(
                 input.RecordingStopped += OnRecordingStopped;
                 input.StartRecording();
             }
-            catch
+            catch (Exception exception)
             {
+                Exception? cleanupFailure;
                 if (capture is not null)
                 {
                     Detach(capture);
-                    capture.Writer.Dispose();
                     capture.Completion.TrySetCanceled();
+                    cleanupFailure = ReleaseCapture(capture, deleteAudio: true);
                     capture = null;
                 }
+                else
+                {
+                    cleanupFailure = TryCleanup(input.Dispose);
+                    cleanupFailure = TryCleanup(() => File.Delete(path), cleanupFailure);
+                }
 
-                input.Dispose();
-                File.Delete(path);
+                if (cleanupFailure is not null)
+                {
+                    throw new AggregateException(exception, cleanupFailure);
+                }
+
                 throw;
             }
         }
@@ -66,6 +76,12 @@ internal sealed class AudioRecorder(
                 var finished = finishedCapture.Completion.Task;
                 finishedCapture = null;
                 return finished;
+            }
+
+            if (closingCapture is not null)
+            {
+                closingCapture.StopRequested = true;
+                return closingCapture.Completion.Task;
             }
 
             current = capture ?? throw new InvalidOperationException("No recording is in progress.");
@@ -102,25 +118,18 @@ internal sealed class AudioRecorder(
             {
                 Detach(current);
                 current.Completion.TrySetCanceled();
-                current.Writer.Dispose();
             }
         }
 
+        var failure = current is not null ? ReleaseCapture(current, deleteAudio: true) : null;
         if (finished is not null)
         {
-            File.Delete(finished.Path);
+            failure = TryCleanup(() => File.Delete(finished.Path), failure);
         }
 
-        if (current is not null)
+        if (failure is not null)
         {
-            try
-            {
-                current.Input.Dispose();
-            }
-            finally
-            {
-                File.Delete(current.Path);
-            }
+            throw failure;
         }
     }
 
@@ -148,7 +157,15 @@ internal sealed class AudioRecorder(
 
         if (current.Failure is not null)
         {
-            current.Input.StopRecording();
+            try
+            {
+                current.Input.StopRecording();
+            }
+            catch (InvalidOperationException) when (disposed)
+            {
+                // Shutdown already released this capture.
+            }
+
             return;
         }
 
@@ -168,40 +185,67 @@ internal sealed class AudioRecorder(
 
             current = capture;
             capture = null;
-            if (!current.StopRequested)
-            {
-                finishedCapture = current;
-            }
-
+            closingCapture = current;
             Detach(current);
         }
 
-        try
+        var failure = ReleaseCapture(current, deleteAudio: false, current.Failure ?? eventArgs.Exception);
+        if (failure is not null)
         {
-            current.Writer.Dispose();
-            current.Input.Dispose();
-            var failure = current.Failure ?? eventArgs.Exception;
-            if (failure is not null)
+            failure = TryCleanup(() => File.Delete(current.Path), failure);
+        }
+
+        lock (gate)
+        {
+            closingCapture = null;
+            if (!current.StopRequested)
             {
-                throw failure;
+                if (disposed)
+                {
+                    failure = TryCleanup(() => File.Delete(current.Path), failure);
+                }
+                else
+                {
+                    finishedCapture = current;
+                }
             }
 
-            // The completed task now owns this WAV, not this recorder or a later capture.
-            current.Completion.TrySetResult(current.Path);
+            if (failure is not null)
+            {
+                if (disposed && !current.StopRequested)
+                {
+                    Console.Error.WriteLine($"Recording cleanup failed: {failure.Message}");
+                }
+
+                current.Completion.TrySetException(failure);
+            }
+            else
+            {
+                // A requested stop transfers ownership through its task, never to a later capture.
+                current.Completion.TrySetResult(current.Path);
+            }
+        }
+    }
+
+    private static Exception? ReleaseCapture(Capture current, bool deleteAudio, Exception? failure = null)
+    {
+        failure = TryCleanup(current.Writer.Dispose, failure);
+        failure = TryCleanup(current.Input.Dispose, failure);
+        return deleteAudio ? TryCleanup(() => File.Delete(current.Path), failure) : failure;
+    }
+
+    private static Exception? TryCleanup(Action cleanup, Exception? failure = null)
+    {
+        try
+        {
+            cleanup();
         }
         catch (Exception exception)
         {
-            try
-            {
-                File.Delete(current.Path);
-            }
-            catch (Exception cleanupException) when (cleanupException is IOException or UnauthorizedAccessException)
-            {
-                exception = new AggregateException(exception, cleanupException);
-            }
-
-            current.Completion.TrySetException(exception);
+            return failure is null ? exception : new AggregateException(failure, exception);
         }
+
+        return failure;
     }
 
     private void Detach(Capture current)

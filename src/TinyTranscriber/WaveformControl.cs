@@ -107,7 +107,7 @@ internal sealed class WaveformControl : Control
         var spacing = ClientSize.Width / (float)BarCount;
         var centerY = ClientSize.Height / 2f;
 
-        using var pen = new Pen(AccentColor, 3.2f)
+        using var pen = new Pen(AccentColor, 3.2f * ClientSize.Height / 44f)
         {
             StartCap = LineCap.Round,
             EndCap = LineCap.Round

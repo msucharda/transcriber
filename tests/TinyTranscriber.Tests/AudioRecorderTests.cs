@@ -34,6 +34,7 @@ public sealed class AudioRecorderTests : IDisposable
         var firstPath = await recorder.StopAsync();
         recorder.Start();
         Assert.Equal(2, directory.GetFiles().Length);
+        first.EmitLateEvents();
         recorder.Dispose();
         Assert.Equal(firstPath, Assert.Single(directory.GetFiles()).FullName);
     }
@@ -48,7 +49,7 @@ public sealed class AudioRecorderTests : IDisposable
         Assert.Same(stop, recorder.StopAsync());
         Assert.Equal(1, input.Stops);
         recorder.Dispose();
-        input.Complete();
+        input.EmitLateEvents();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stop);
         Assert.Empty(directory.GetFiles());
     }
@@ -99,6 +100,51 @@ public sealed class AudioRecorderTests : IDisposable
     private AudioRecorder Create(FakeWaveIn input) => new(() => input, directory.FullName);
     public void Dispose() => directory.Delete(recursive: true);
 
+    [Fact]
+    public void DisposalFailureStillClosesWriterAndDeletesOwnedAudio()
+    {
+        var input = new FakeWaveIn { FailDispose = true };
+        using var recorder = Create(input);
+        recorder.Start();
+        Assert.Throws<IOException>(recorder.Dispose);
+        Assert.Empty(directory.GetFiles());
+        Assert.True(input.Disposed);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StopAndDisposeDuringFinalizationPreserveSingleWavOwner(bool requestStop)
+    {
+        using var closing = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var input = new FakeWaveIn
+        {
+            OnDispose = () =>
+            {
+                closing.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(5)));
+            }
+        };
+        using var recorder = Create(input);
+        recorder.Start();
+        var callback = Task.Run(input.Complete);
+        Assert.True(closing.Wait(TimeSpan.FromSeconds(5)));
+        var stop = requestStop ? recorder.StopAsync() : null;
+        recorder.Dispose();
+        release.Set();
+        await callback;
+        if (stop is not null)
+        {
+            var path = await stop;
+            Assert.Equal(path, Assert.Single(directory.GetFiles()).FullName);
+        }
+        else
+        {
+            Assert.Empty(directory.GetFiles());
+        }
+    }
+
     private sealed class FakeWaveIn : IWaveIn
     {
         public WaveFormat WaveFormat { get; set; } = new(16000, 16, 1);
@@ -106,11 +152,17 @@ public sealed class AudioRecorderTests : IDisposable
         public event EventHandler<StoppedEventArgs>? RecordingStopped;
         public bool CompleteOnStop { get; init; } = true;
         public bool FailStart { get; init; }
+        public bool FailDispose { get; init; }
+        public Action? OnDispose { get; init; }
         public Exception? Failure { get; init; }
         public bool Disposed { get; private set; }
         public int Stops { get; private set; }
+        private EventHandler<WaveInEventArgs>? lateData;
+        private EventHandler<StoppedEventArgs>? lateStopped;
         public void StartRecording()
         {
+            lateData = DataAvailable;
+            lateStopped = RecordingStopped;
             if (FailStart) { throw new InvalidOperationException("Device unavailable."); }
         }
 
@@ -121,7 +173,18 @@ public sealed class AudioRecorderTests : IDisposable
         }
 
         public void EmitData() => DataAvailable?.Invoke(this, new WaveInEventArgs(new byte[8], 8));
+        public void EmitLateEvents()
+        {
+            lateData?.Invoke(this, new WaveInEventArgs(new byte[8], 8));
+            lateStopped?.Invoke(this, new StoppedEventArgs());
+        }
+
         public void Complete() => RecordingStopped?.Invoke(this, new StoppedEventArgs(Failure));
-        public void Dispose() => Disposed = true;
+        public void Dispose()
+        {
+            Disposed = true;
+            OnDispose?.Invoke();
+            if (FailDispose) { throw new IOException("Device cleanup failed."); }
+        }
     }
 }
