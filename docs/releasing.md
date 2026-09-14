@@ -1,13 +1,12 @@
 # Releasing Tiny Transcriber
 
-## Current scope: private preparation only
+## Release authorization and visibility
 
-The repository remains **private**. Preparing these files or running branch CI
-does not authorize creating a tag, publishing a release, or changing repository
-visibility. None of the scripts changes visibility. GitHub Releases and their
-assets inherit repository access: a release in a private repository is not a
-public download. Any future release or visibility change requires separate
-maintainer authorization.
+Preparing these files or running branch CI does not authorize creating a tag or
+publishing a release. Push a version tag only after a maintainer has approved
+that release. Repository visibility changes require their own authorization;
+none of the scripts changes visibility. GitHub Releases and their assets inherit
+repository access: a release in a private repository is not a public download.
 
 ## What is shipped
 
@@ -152,12 +151,14 @@ Prerelease tags produce prereleases and are not marked latest.
 
 Before the first release, an administrator must:
 
-1. Keep the repository private during preparation. If public distribution is
-   separately authorized, complete the privacy/security review before an
-   administrator changes visibility; the release workflow never does this.
-2. Protect `main` with required reviews and the `Test and package Windows x64`
-   CI check. Do not treat unavailable protection APIs on a private/free
-   repository as proof that protection is enabled.
+1. Complete the privacy/security review and obtain authorization for public
+   distribution before an administrator changes visibility; the release
+   workflow never does this.
+2. Protect `main` with pull requests and the `Test and package Windows x64` CI
+   check. Require independent approvals when another reviewer is available;
+   do not claim a sole maintainer's own review is independent approval.
+   Do not treat unavailable protection APIs on a private/free repository as
+   proof that protection is enabled.
 3. Restrict creation/update/deletion of release tags to trusted maintainers
    using repository rulesets. Main-ancestry checks are not a substitute:
    someone able to push an arbitrary tag can also tag altered workflow code.
