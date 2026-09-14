@@ -11,6 +11,8 @@ internal sealed class AudioRecorder : IDisposable
 
     public bool IsRecording => waveIn is not null;
 
+    public event Action<float>? LevelChanged;
+
     public void Start()
     {
         if (IsRecording)
@@ -67,6 +69,8 @@ internal sealed class AudioRecorder : IDisposable
     {
         writer?.Write(eventArgs.Buffer, 0, eventArgs.BytesRecorded);
         writer?.Flush();
+        LevelChanged?.Invoke(
+            AudioLevelCalculator.Calculate(eventArgs.Buffer.AsSpan(0, eventArgs.BytesRecorded)));
     }
 
     private void OnRecordingStopped(object? sender, StoppedEventArgs eventArgs)

@@ -10,8 +10,9 @@ Press `Ctrl+Shift+Space` once to start recording and again to stop. The app:
 3. Copies the transcript to the clipboard.
 4. Pastes it into the window where dictation was stopped.
 
-An always-on-top status pill appears while the app is recording or
-transcribing, without taking keyboard focus from the target application.
+An always-on-top status pill appears without taking keyboard focus. Its live
+waveform responds to microphone volume while recording, then changes to a
+processing animation while Azure transcribes the audio.
 
 The request intentionally does not set `locales`, so MAI-Transcribe-2 stays in
 multilingual mode and can automatically identify Czech and English while

@@ -34,6 +34,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
 
         hotkeyWindow = new HotkeyWindow(hotkey);
         hotkeyWindow.Pressed += OnHotkeyPressed;
+        recorder.LevelChanged += OnAudioLevelChanged;
 
         ShowMessage(
             "Tiny Transcriber is ready",
@@ -44,6 +45,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         hotkeyWindow.Pressed -= OnHotkeyPressed;
+        recorder.LevelChanged -= OnAudioLevelChanged;
         hotkeyWindow.Dispose();
         recorder.Dispose();
         statusForm.Dispose();
@@ -130,6 +132,11 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private void ShowMessage(string title, string text, ToolTipIcon icon)
     {
         notifyIcon.ShowBalloonTip(5000, title, text, icon);
+    }
+
+    private void OnAudioLevelChanged(float level)
+    {
+        statusForm.SetAudioLevel(level);
     }
 
     private enum DictationState
