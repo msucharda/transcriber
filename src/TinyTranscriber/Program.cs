@@ -9,6 +9,7 @@ static class Program
 
         try
         {
+            using var consoleLifetime = ConsoleLifetime.AttachToParent(Application.Exit);
             Application.Run(new DictationApplicationContext());
         }
         catch (Exception exception)

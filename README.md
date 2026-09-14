@@ -54,7 +54,8 @@ dotnet run --project .\src\TinyTranscriber\TinyTranscriber.csproj
 ```
 
 Tiny Transcriber has no main window. It appears in the notification area and
-can be closed from its tray icon menu.
+can be closed from its tray icon menu. When launched with `dotnet run` from a
+terminal, `Ctrl+C` also exits the app cleanly.
 
 The shortcut can be changed without recompiling:
 
