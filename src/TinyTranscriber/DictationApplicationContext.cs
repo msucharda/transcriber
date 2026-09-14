@@ -7,6 +7,8 @@ internal sealed class DictationApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon notifyIcon;
     private readonly HotkeyWindow hotkeyWindow;
+    private readonly HotkeyDefinition hotkey = HotkeyDefinition.Load();
+    private readonly StatusForm statusForm = new();
     private readonly AudioRecorder recorder = new();
     private readonly MaiTranscriptionClient transcriptionClient = new(
         new HttpClient
@@ -24,18 +26,18 @@ internal sealed class DictationApplicationContext : ApplicationContext
         notifyIcon = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "Tiny Transcriber - Ctrl+Space to record",
+            Text = $"Tiny Transcriber - {hotkey.DisplayName} to record",
             ContextMenuStrip = new ContextMenuStrip(),
             Visible = true
         };
         notifyIcon.ContextMenuStrip.Items.Add(exitItem);
 
-        hotkeyWindow = new HotkeyWindow();
+        hotkeyWindow = new HotkeyWindow(hotkey);
         hotkeyWindow.Pressed += OnHotkeyPressed;
 
         ShowMessage(
             "Tiny Transcriber is ready",
-            "Press Ctrl+Space to start recording, then press it again to transcribe and paste.",
+            $"Press {hotkey.DisplayName} to start recording, then press it again to transcribe and paste.",
             ToolTipIcon.Info);
     }
 
@@ -44,6 +46,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         hotkeyWindow.Pressed -= OnHotkeyPressed;
         hotkeyWindow.Dispose();
         recorder.Dispose();
+        statusForm.Dispose();
         notifyIcon.Visible = false;
         notifyIcon.Dispose();
         base.ExitThreadCore();
@@ -69,7 +72,8 @@ internal sealed class DictationApplicationContext : ApplicationContext
         catch (Exception exception)
         {
             state = DictationState.Idle;
-            notifyIcon.Text = "Tiny Transcriber - Ctrl+Space to record";
+            notifyIcon.Text = $"Tiny Transcriber - {hotkey.DisplayName} to record";
+            statusForm.HideStatus();
             ShowMessage("Dictation failed", exception.Message, ToolTipIcon.Error);
         }
     }
@@ -84,6 +88,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         recorder.Start();
         state = DictationState.Recording;
         notifyIcon.Text = "Tiny Transcriber - recording";
+        statusForm.ShowRecording(hotkey.DisplayName);
         SystemSounds.Asterisk.Play();
     }
 
@@ -91,6 +96,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
     {
         state = DictationState.Transcribing;
         notifyIcon.Text = "Tiny Transcriber - transcribing";
+        statusForm.ShowTranscribing();
         var targetWindow = NativeInput.GetActiveWindow();
         string? audioPath = null;
 
@@ -116,7 +122,8 @@ internal sealed class DictationApplicationContext : ApplicationContext
             }
 
             state = DictationState.Idle;
-            notifyIcon.Text = "Tiny Transcriber - Ctrl+Space to record";
+            notifyIcon.Text = $"Tiny Transcriber - {hotkey.DisplayName} to record";
+            statusForm.HideStatus();
         }
     }
 

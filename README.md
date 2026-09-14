@@ -3,12 +3,15 @@
 A small Windows tray app for bilingual Czech/English dictation using
 Azure Speech's `MAI-Transcribe-2` model.
 
-Press `Ctrl+Space` once to start recording and again to stop. The app:
+Press `Ctrl+Shift+Space` once to start recording and again to stop. The app:
 
 1. Records the default microphone as a 16 kHz mono WAV file.
 2. Sends it to the Azure Speech fast transcription REST API.
 3. Copies the transcript to the clipboard.
 4. Pastes it into the window where dictation was stopped.
+
+An always-on-top status pill appears while the app is recording or
+transcribing, without taking keyboard focus from the target application.
 
 The request intentionally does not set `locales`, so MAI-Transcribe-2 stays in
 multilingual mode and can automatically identify Czech and English while
@@ -52,7 +55,15 @@ dotnet run --project .\src\TinyTranscriber\TinyTranscriber.csproj
 Tiny Transcriber has no main window. It appears in the notification area and
 can be closed from its tray icon menu.
 
-If `Ctrl+Space` is already reserved by another application, Tiny Transcriber
+The shortcut can be changed without recompiling:
+
+```powershell
+setx TINY_TRANSCRIBER_HOTKEY "Ctrl+Alt+Space"
+```
+
+Restart Tiny Transcriber after changing it. Supported modifiers are `Ctrl`,
+`Shift`, `Alt`, and `Win`; the final component can be a key such as `Space`,
+`F8`, or `D`. If the configured shortcut is already reserved, Tiny Transcriber
 shows an error and exits.
 
 ## Build a standalone executable

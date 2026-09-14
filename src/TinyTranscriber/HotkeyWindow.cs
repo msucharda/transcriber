@@ -7,20 +7,19 @@ internal sealed class HotkeyWindow : NativeWindow, IDisposable
 {
     private const int HotkeyId = 1;
     private const int WmHotkey = 0x0312;
-    private const uint ModControl = 0x0002;
-    private const uint VkSpace = 0x20;
     private bool disposed;
 
-    public HotkeyWindow()
+    public HotkeyWindow(HotkeyDefinition hotkey)
     {
         CreateHandle(new CreateParams());
 
-        if (!RegisterHotKey(Handle, HotkeyId, ModControl, VkSpace))
+        if (!RegisterHotKey(Handle, HotkeyId, hotkey.Modifiers, hotkey.VirtualKey))
         {
             DestroyHandle();
             throw new Win32Exception(
                 Marshal.GetLastWin32Error(),
-                "Ctrl+Space is already registered by another application.");
+                $"{hotkey.DisplayName} is already registered by another application. "
+                + $"Set {HotkeyDefinition.EnvironmentVariable} to another shortcut.");
         }
     }
 
