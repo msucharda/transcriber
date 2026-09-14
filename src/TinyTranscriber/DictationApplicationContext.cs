@@ -1,3 +1,4 @@
+using Azure.Identity;
 using System.Media;
 
 namespace TinyTranscriber;
@@ -7,10 +8,12 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private readonly NotifyIcon notifyIcon;
     private readonly HotkeyWindow hotkeyWindow;
     private readonly AudioRecorder recorder = new();
-    private readonly MaiTranscriptionClient transcriptionClient = new(new HttpClient
-    {
-        Timeout = TimeSpan.FromMinutes(2)
-    });
+    private readonly MaiTranscriptionClient transcriptionClient = new(
+        new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(2)
+        },
+        new DefaultAzureCredential());
     private DictationState state;
 
     public DictationApplicationContext()

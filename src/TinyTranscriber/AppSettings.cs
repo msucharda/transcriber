@@ -1,6 +1,6 @@
 namespace TinyTranscriber;
 
-internal sealed record AppSettings(Uri Endpoint, string SubscriptionKey)
+internal sealed record AppSettings(Uri Endpoint, string? SubscriptionKey)
 {
     public const string EndpointVariable = "AZURE_SPEECH_ENDPOINT";
     public const string KeyVariable = "AZURE_SPEECH_KEY";
@@ -10,10 +10,10 @@ internal sealed record AppSettings(Uri Endpoint, string SubscriptionKey)
         var endpointValue = Environment.GetEnvironmentVariable(EndpointVariable)?.Trim();
         var key = Environment.GetEnvironmentVariable(KeyVariable)?.Trim();
 
-        if (string.IsNullOrWhiteSpace(endpointValue) || string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(endpointValue))
         {
             settings = null;
-            error = $"Set {EndpointVariable} and {KeyVariable}, then restart Tiny Transcriber.";
+            error = $"Set {EndpointVariable}, then restart Tiny Transcriber.";
             return false;
         }
 
@@ -25,7 +25,7 @@ internal sealed record AppSettings(Uri Endpoint, string SubscriptionKey)
             return false;
         }
 
-        settings = new AppSettings(endpoint, key);
+        settings = new AppSettings(endpoint, string.IsNullOrWhiteSpace(key) ? null : key);
         error = null;
         return true;
     }

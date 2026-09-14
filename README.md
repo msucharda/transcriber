@@ -22,20 +22,26 @@ remove fillers and format dictated text for readability.
 - Windows 10 or newer.
 - An Azure Speech resource in a
   [region that supports LLM Speech](https://learn.microsoft.com/azure/ai-services/speech-service/regions?tabs=llmspeech).
-- The resource endpoint and subscription key.
+- The resource endpoint and permission to use it through Microsoft Entra ID.
+- Azure CLI signed in with `az login`.
 - .NET 10 SDK for local builds.
 
 ## Configure
 
-Set the Azure Speech resource endpoint and key as user environment variables:
+Sign in and set the Azure Speech resource endpoint as a user environment
+variable:
 
 ```powershell
-setx AZURE_SPEECH_ENDPOINT "https://YOUR-RESOURCE.cognitiveservices.azure.com"
-setx AZURE_SPEECH_KEY "YOUR-KEY"
+az login
+setx AZURE_SPEECH_ENDPOINT "https://ais-tiny-transcriber-msucharda-neu.cognitiveservices.azure.com"
 ```
 
-Restart the terminal and Tiny Transcriber after changing these variables.
-The key is not written to the repository or an application settings file.
+Restart the terminal and Tiny Transcriber after changing this variable. The app
+uses `DefaultAzureCredential`, which can reuse the Azure CLI session. Your
+identity needs the `Cognitive Services User` role on the Azure resource.
+
+For resources that allow local API-key authentication, `AZURE_SPEECH_KEY` is
+still supported as an optional fallback.
 
 ## Run
 

@@ -1,12 +1,15 @@
+using Azure.Core;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
 namespace TinyTranscriber;
 
-internal sealed class MaiTranscriptionClient(HttpClient httpClient)
+internal sealed class MaiTranscriptionClient(HttpClient httpClient, TokenCredential credential)
 {
     private const string ApiVersion = "2025-10-15";
+    private static readonly string[] CognitiveServicesScopes =
+        ["https://cognitiveservices.azure.com/.default"];
 
     public async Task<string> TranscribeAsync(
         string audioPath,
@@ -18,7 +21,7 @@ internal sealed class MaiTranscriptionClient(HttpClient httpClient)
             $"/speechtotext/transcriptions:transcribe?api-version={ApiVersion}");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
-        request.Headers.Add("Ocp-Apim-Subscription-Key", settings.SubscriptionKey);
+        await AddAuthenticationAsync(request, settings, cancellationToken);
         request.Content = CreateContent(audioPath);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -31,6 +34,23 @@ internal sealed class MaiTranscriptionClient(HttpClient httpClient)
         }
 
         return TranscriptionResponseParser.Parse(responseBody);
+    }
+
+    private async Task AddAuthenticationAsync(
+        HttpRequestMessage request,
+        AppSettings settings,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.SubscriptionKey))
+        {
+            request.Headers.Add("Ocp-Apim-Subscription-Key", settings.SubscriptionKey);
+            return;
+        }
+
+        var token = await credential.GetTokenAsync(
+            new TokenRequestContext(CognitiveServicesScopes),
+            cancellationToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
     }
 
     private static MultipartFormDataContent CreateContent(string audioPath)
