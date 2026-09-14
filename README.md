@@ -8,7 +8,9 @@ Press `Ctrl+Shift+Space` once to start recording and again to stop. The app:
 1. Records the default microphone as a 16 kHz mono WAV file.
 2. Sends it to the Azure Speech fast transcription REST API.
 3. Copies the transcript to the clipboard.
-4. Pastes it into the window where dictation was stopped.
+4. Pastes it only after checking that the window where dictation was stopped is
+   still valid and has foreground focus. If that check fails, the text stays on
+   the clipboard and a notification tells you to paste manually.
 
 An always-on-top status pill appears without taking keyboard focus. Its live
 waveform responds to microphone volume while recording, then changes to a
@@ -19,6 +21,11 @@ multilingual mode and can automatically identify Czech and English while
 handling switches between them. Transcription style is set to `clean` to
 remove fillers and format dictated text for readability. The Speech result is
 pasted directly, without a separate text-editing model or rewriting step.
+
+Stay in the intended text field until dictation finishes. Window-level checks
+cannot identify browser tabs or individual fields, and focus can still change
+after a check. Clipboard history, cloud clipboard sync, and other applications
+may retain or read copied text.
 
 > MAI-Transcribe-2 is currently an Azure public preview feature.
 

@@ -131,8 +131,17 @@ internal sealed class DictationApplicationContext : ApplicationContext
             var transcript = await transcriptionClient.TranscribeAsync(audioPath, settings, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             Clipboard.SetText(transcript);
-            await NativeInput.PasteAsync(targetWindow, cancellationToken);
-            SystemSounds.Exclamation.Play();
+            if (await NativeInput.TryPasteAsync(targetWindow, cancellationToken))
+            {
+                SystemSounds.Exclamation.Play();
+            }
+            else
+            {
+                ShowMessage(
+                    "Transcript copied, not pasted",
+                    "The destination window could not be verified. Select the intended field and press Ctrl+V.",
+                    ToolTipIcon.Warning);
+            }
         }
         finally
         {
