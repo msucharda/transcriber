@@ -85,14 +85,6 @@ internal sealed class StatusForm : Form
         ShowStatus();
     }
 
-    public void ShowPolishing()
-    {
-        titleLabel.Text = "Polishing";
-        detailLabel.Text = "Lightly editing your transcript";
-        waveform.StartTranscribing();
-        ShowStatus();
-    }
-
     public void SetAudioLevel(float level)
     {
         if (IsDisposed || !IsHandleCreated)

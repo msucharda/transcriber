@@ -1,6 +1,5 @@
 using Azure.Identity;
 using System.Media;
-using System.Runtime.InteropServices;
 
 namespace TinyTranscriber;
 
@@ -15,39 +14,14 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromMinutes(2) };
     private readonly CancellationTokenSource shutdown = new();
     private readonly MaiTranscriptionClient transcriptionClient;
-    private readonly TranscriptCleanupClient cleanupClient;
-    private readonly PreferencesStore preferencesStore = PreferencesStore.ForCurrentUser();
-    private readonly ToolStripMenuItem polishItem;
-    private readonly ToolStripMenuItem copyOriginalItem;
-    private readonly bool cleanupConfigured;
-    private UserPreferences preferences;
-    private string? lastOriginalTranscript;
     private bool exiting;
     private DictationState state;
 
     public DictationApplicationContext()
     {
-        preferences = preferencesStore.Load();
-        cleanupConfigured = !string.IsNullOrWhiteSpace(
-            Environment.GetEnvironmentVariable(AppSettings.CleanupDeploymentVariable));
-        var credential = new DefaultAzureCredential();
-        transcriptionClient = new MaiTranscriptionClient(httpClient, credential);
-        cleanupClient = new TranscriptCleanupClient(httpClient, credential);
+        transcriptionClient = new MaiTranscriptionClient(httpClient, new DefaultAzureCredential());
         hotkeyWindow = new HotkeyWindow(hotkey);
         trayIcons = new TrayIcons();
-        polishItem = new ToolStripMenuItem(cleanupConfigured
-            ? "Polish dictation"
-            : "Polish dictation (not configured)")
-        {
-            Checked = cleanupConfigured && preferences.PolishDictation,
-            Enabled = cleanupConfigured,
-            ToolTipText = cleanupConfigured
-                ? "Conservative text cleanup in Azure after transcription."
-                : $"Set {AppSettings.CleanupDeploymentVariable}, then restart."
-        };
-        polishItem.Click += OnPolishClicked;
-        copyOriginalItem = new ToolStripMenuItem("Copy last original transcript") { Enabled = false };
-        copyOriginalItem.Click += OnCopyOriginalClicked;
         var exitItem = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitThread();
 
@@ -58,8 +32,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
             ContextMenuStrip = new ContextMenuStrip(),
             Visible = true
         };
-        notifyIcon.ContextMenuStrip.Items.AddRange(
-            [polishItem, copyOriginalItem, new ToolStripSeparator(), exitItem]);
+        notifyIcon.ContextMenuStrip.Items.Add(exitItem);
 
         hotkeyWindow.Pressed += OnHotkeyPressed;
         recorder.LevelChanged += OnAudioLevelChanged;
@@ -105,7 +78,6 @@ internal sealed class DictationApplicationContext : ApplicationContext
                     await StopTranscribeAndPasteAsync();
                     break;
                 case DictationState.Transcribing:
-                case DictationState.Polishing:
                     SystemSounds.Beep.Play();
                     break;
             }
@@ -120,10 +92,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
             {
                 SetState(DictationState.Idle);
                 statusForm.HideStatus();
-                var recovery = lastOriginalTranscript is null
-                    ? ""
-                    : " The last original transcript is available from the tray menu.";
-                ShowMessage("Dictation failed", exception.Message + recovery, ToolTipIcon.Error);
+                ShowMessage("Dictation failed", exception.Message, ToolTipIcon.Error);
             }
         }
     }
@@ -147,7 +116,6 @@ internal sealed class DictationApplicationContext : ApplicationContext
         statusForm.ShowTranscribing();
         var targetWindow = NativeInput.GetActiveWindow();
         var cancellationToken = shutdown.Token;
-        var polishEnabled = polishItem.Checked;
         string? audioPath = null;
 
         try
@@ -160,34 +128,11 @@ internal sealed class DictationApplicationContext : ApplicationContext
                 throw new InvalidOperationException(error);
             }
 
-            lastOriginalTranscript = await transcriptionClient.TranscribeAsync(audioPath, settings, cancellationToken);
+            var transcript = await transcriptionClient.TranscribeAsync(audioPath, settings, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (polishEnabled)
-            {
-                SetState(DictationState.Polishing);
-                statusForm.ShowPolishing();
-            }
-
-            var result = await TranscriptProcessor.ProcessAsync(
-                lastOriginalTranscript,
-                polishEnabled,
-                (text, token) => cleanupClient.CleanAsync(text, settings, token),
-                cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            Clipboard.SetText(result.Text);
+            Clipboard.SetText(transcript);
             await NativeInput.PasteAsync(targetWindow, cancellationToken);
-            if (result.CleanupError is not null)
-            {
-                ShowMessage(
-                    "Polishing unavailable",
-                    $"Using the original transcript instead. {result.CleanupError} "
-                        + "You can also copy it from the tray menu.",
-                    ToolTipIcon.Warning);
-            }
-            else
-            {
-                SystemSounds.Exclamation.Play();
-            }
+            SystemSounds.Exclamation.Play();
         }
         finally
         {
@@ -211,47 +156,11 @@ internal sealed class DictationApplicationContext : ApplicationContext
             DictationState.Idle => (trayIcons.Idle, $"Tiny Transcriber - {hotkey.DisplayName} to record"),
             DictationState.Recording => (trayIcons.Recording, "Tiny Transcriber - recording"),
             DictationState.Transcribing => (trayIcons.Transcribing, "Tiny Transcriber - transcribing"),
-            DictationState.Polishing => (trayIcons.Transcribing, "Tiny Transcriber - polishing"),
             _ => throw new ArgumentOutOfRangeException(nameof(nextState))
         };
         state = nextState;
         notifyIcon.Icon = icon;
         notifyIcon.Text = text;
-        polishItem.Enabled = cleanupConfigured && state == DictationState.Idle;
-        copyOriginalItem.Enabled = lastOriginalTranscript is not null && state == DictationState.Idle;
-    }
-
-    private void OnPolishClicked(object? sender, EventArgs eventArgs)
-    {
-        var updated = preferences with { PolishDictation = !preferences.PolishDictation };
-        try
-        {
-            preferencesStore.Save(updated);
-            preferences = updated;
-            polishItem.Checked = updated.PolishDictation;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            ShowMessage("Could not save preference", exception.Message, ToolTipIcon.Error);
-        }
-    }
-
-    private void OnCopyOriginalClicked(object? sender, EventArgs eventArgs)
-    {
-        if (lastOriginalTranscript is null)
-        {
-            return;
-        }
-
-        try
-        {
-            Clipboard.SetText(lastOriginalTranscript);
-            ShowMessage("Original transcript copied", "Use Ctrl+V to paste it where you need it.", ToolTipIcon.Info);
-        }
-        catch (ExternalException exception)
-        {
-            ShowMessage("Could not copy transcript", exception.Message, ToolTipIcon.Error);
-        }
     }
 
     private void ShowMessage(string title, string text, ToolTipIcon icon)
@@ -268,7 +177,6 @@ internal sealed class DictationApplicationContext : ApplicationContext
     {
         Idle,
         Recording,
-        Transcribing,
-        Polishing
+        Transcribing
     }
 }
