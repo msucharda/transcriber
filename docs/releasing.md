@@ -1,5 +1,14 @@
 # Releasing Tiny Transcriber
 
+## Current scope: private preparation only
+
+The repository remains **private**. Preparing these files or running branch CI
+does not authorize creating a tag, publishing a release, or changing repository
+visibility. None of the scripts changes visibility. GitHub Releases and their
+assets inherit repository access: a release in a private repository is not a
+public download. Any future release or visibility change requires separate
+maintainer authorization.
+
 ## What is shipped
 
 Supported binary target: **Windows x64**, .NET 10, self-contained, single file.
@@ -143,8 +152,9 @@ Prerelease tags produce prereleases and are not marked latest.
 
 Before the first release, an administrator must:
 
-1. Make the intended source repository public only after the privacy/security
-   review is complete.
+1. Keep the repository private during preparation. If public distribution is
+   separately authorized, complete the privacy/security review before an
+   administrator changes visibility; the release workflow never does this.
 2. Protect `main` with required reviews and the `Test and package Windows x64`
    CI check. Do not treat unavailable protection APIs on a private/free
    repository as proof that protection is enabled.
