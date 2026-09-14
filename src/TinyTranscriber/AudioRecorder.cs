@@ -50,8 +50,9 @@ internal sealed class AudioRecorder : IDisposable
             throw new InvalidOperationException("No recording is in progress.");
         }
 
+        var completion = stopped.Task;
         waveIn.StopRecording();
-        return stopped.Task;
+        return completion;
     }
 
     public void Dispose()
@@ -91,6 +92,7 @@ internal sealed class AudioRecorder : IDisposable
             return;
         }
 
+        outputPath = null;
         completion.TrySetResult(path);
     }
 

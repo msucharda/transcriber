@@ -13,14 +13,16 @@ internal static class NativeInput
         return GetForegroundWindow();
     }
 
-    public static async Task PasteAsync(nint targetWindow)
+    public static async Task PasteAsync(nint targetWindow, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (targetWindow != nint.Zero)
         {
             SetForegroundWindow(targetWindow);
-            await Task.Delay(75);
+            await Task.Delay(75, cancellationToken);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         keybd_event(VkControl, 0, 0, UIntPtr.Zero);
         keybd_event(VkV, 0, 0, UIntPtr.Zero);
         keybd_event(VkV, 0, KeyUp, UIntPtr.Zero);
