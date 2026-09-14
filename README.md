@@ -80,7 +80,9 @@ change after a check. Review the result before sending or executing it.
 ## Dictate the next paragraph without waiting
 
 Press **Ctrl+Shift+Space** to start paragraph A, again to stop it, and again to
-record B while A transcribes. There is one microphone capture and at most **one
+record B while A transcribes (the default toggle mode). **Settings** also offers
+push-to-talk: hold the shortcut to record and release its main key to transcribe.
+There is one microphone capture and at most **one
 Speech request** at a time. **Two unfinished paragraphs total** are allowed,
 including recording, stopping, waiting, transcribing, and undelivered
 work. This is not a long recording backlog or an interview mode.
@@ -91,7 +93,9 @@ visible waiting notification until a slot becomes free; accepted audio is never
 dropped to make room. If you press again during the brief microphone-stopping
 transition, one next recording is reserved when capacity permits and starts
 when the device is released. Further presses during that transition do not
-queue more toggles. Wait for **Listening** before speaking.
+queue more toggles. Wait for **Listening** before speaking. In push-to-talk
+mode, releasing before a reserved recording can start cancels only that empty
+reservation and notifies you; it never starts recording after you let go.
 
 The real volume bars and recording tray icon stay primary. When a previous
 paragraph is genuinely transcribing, the Listening pill also shows a subtle blue
@@ -112,14 +116,18 @@ FIFO. Each one's destination is captured when you press to **stop** it, before
 the asynchronous device stop. A burst continues while any paragraph remains
 unfinished; a recording accepted after the count reaches zero starts a new
 burst. Consecutive automatic deliveries in the same burst to the same captured
-window are separated by exactly two Windows newlines (`\r\n\r\n`). The first
-delivery, a different target, and a new burst have no added leading separator.
-The returned transcript itself is not rewritten or trimmed.
+window use your selected separator: **one space by default**, one Windows
+newline (`\r\n`), or a blank line (`\r\n\r\n`). The first delivery, a different
+target, and a new burst have no added leading separator. The returned transcript
+itself is not rewritten or trimmed. The choice is captured when each recording
+is accepted, so changing settings cannot reformat already pending dictation.
 
 ### Recover pending work from the tray
 
 Automatic delivery **never activates an old window**. The original window must
-still exist and already be foreground, with keyboard modifiers released. A failed
+still exist and already be foreground. While shortcut modifiers are held, it
+waits without changing the clipboard; **Ready to insert** reminds you to release
+the keys. Holding a push-to-talk chord is not a failed delivery. A failed
 destination check, clipboard operation, or input operation pauses delivery and
 retains the result; later paragraphs cannot paste ahead of it. Already accepted
 audio may finish transcribing while delivery is paused, within the two-slot
@@ -130,7 +138,7 @@ Right-click the tray icon:
 | Action | Effect |
 |---|---|
 | **Pause automatic delivery** | Keep results without any further automatic clipboard changes or paste attempts. |
-| **Copy ready paragraphs (pauses)** | Copy the consecutive ready results at the front as one block, separated by blank lines, regardless of their original targets. No leading blank line is added. Not-yet-ready audio is not skipped. Work remains counted and automatic delivery stays paused. |
+| **Copy ready paragraphs (pauses)** | Copy the consecutive ready results at the front as one block, using each recording's saved separator, regardless of their original targets. No leading separator is added. Not-yet-ready audio is not skipped. Work remains counted and automatic delivery stays paused. |
 | **I pasted the copied paragraphs** | After you paste manually, remove **only the last successfully copied snapshot**, not results completed afterward. This does not resume delivery. |
 | **Resume delivery in 3 seconds** | Explicitly re-enable delivery after a short delay to select the original field. It does not retarget or activate anything. Unacknowledged copied text must be acknowledged first. |
 
@@ -155,7 +163,37 @@ is **no recovery after app exit** or permanent transcript/audio archive.
 
 ## Settings
 
-Settings use environment variables; restart the app after changing them.
+Right-click the tray icon and open **Settings...** for a separate native window:
+
+| Setting | Choices |
+|---|---|
+| **Recording mode** | **Press to start / press to stop** (default), or **Push to talk (hold to record)**. |
+| **Between queued dictations** | **Continue on same line (space)** (default), **New line**, or **New paragraph (blank line)**. |
+
+Choose **Save** to apply and remember the choices, or **Cancel** to leave them
+unchanged. Settings are stored in
+`%LOCALAPPDATA%\TinyTranscriber\preferences.json`, containing only these
+preferences, not audio, transcripts, endpoints, or credentials. Save errors
+leave the window open with an explanation and preserve the previous settings.
+An unreadable settings file is reported; the current session uses the defaults
+until you save valid choices.
+
+In push-to-talk mode, use the same global shortcut: hold **Ctrl+Shift+Space**
+to record and release **Space** to stop. Releasing only Ctrl/Shift does not stop
+capture while Space remains held. With a custom shortcut, its main key replaces
+Space. Release detection checks that key about every 15 ms while held; UI
+scheduling can add latency. Audio submission starts on release independently
+of keyboard modifiers, but automatic insertion waits until those modifiers are
+also released. The two-slot limit and single-request ordering still apply.
+
+Settings can stay open while you use another app. Finish any active recording
+before saving a mode change; **Save** is disabled during microphone capture or
+stopping. Dictation does not start while the settings window itself has focus,
+and the app never automatically pastes into its own settings window. Opening
+settings during pending delivery changes focus and can pause that delivery.
+
+The shortcut and Azure connection still use environment variables; restart the
+app after changing these:
 
 | Variable | Purpose |
 |---|---|
@@ -171,7 +209,7 @@ setx TINY_TRANSCRIBER_HOTKEY "Ctrl+Alt+Space"
 
 Supported modifiers are `Ctrl`, `Shift`, `Alt`, and `Win`, followed by a key such
 as `Space`, `F8`, or `D`. A shortcut already reserved by another app causes a
-startup error. There is currently no settings window or microphone picker;
+startup error. There is currently no microphone picker;
 recording uses your Windows default input device.
 
 The app uses `DefaultAzureCredential`, which can reuse your Azure CLI login

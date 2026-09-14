@@ -26,7 +26,7 @@ public sealed class ParagraphQueueTests
         await Until(() => fixture.Queue.Status.Unfinished == 0);
 
         Assert.Equal(["clip-1", "clip-2"], fixture.Requests.Select(request => request.Path));
-        Assert.Equal(["First.", "\r\n\r\nSecond."], fixture.Delivery.Pastes.Select(paste => paste.Text));
+        Assert.Equal(["First.", " Second."], fixture.Delivery.Pastes.Select(paste => paste.Text));
         Assert.Equal(1, fixture.MaxRequests);
         Assert.Equal(["clip-1", "clip-2"], fixture.Deleted);
     }
@@ -118,7 +118,7 @@ public sealed class ParagraphQueueTests
         Assert.Equal(HotkeyResult.Full, fixture.Press());
 
         fixture.Queue.CopyReadyParagraphs();
-        Assert.Equal("One.\r\n\r\nTwo.", fixture.Delivery.Clipboard);
+        Assert.Equal("One. Two.", fixture.Delivery.Clipboard);
         Assert.Equal(2, fixture.Queue.Status.Unfinished);
         fixture.Delivery.AllowPaste = true;
         fixture.Queue.ResumeDelivery();
@@ -129,7 +129,7 @@ public sealed class ParagraphQueueTests
         fixture.StartAndStop();
         fixture.Requests[2].Complete("Three.");
         await Until(() => fixture.Queue.Status.CanCopy);
-        Assert.Equal("One.\r\n\r\nTwo.", fixture.Delivery.Clipboard);
+        Assert.Equal("One. Two.", fixture.Delivery.Clipboard);
         fixture.Queue.ResumeDelivery();
         await Until(() => fixture.Queue.Status.Unfinished == 0);
         Assert.Equal("Three.", Assert.Single(fixture.Delivery.Pastes).Text);
@@ -421,6 +421,164 @@ public sealed class ParagraphQueueTests
         Assert.Single(fixture.Delivery.Pastes);
         Assert.Empty(fixture.Errors);
         Assert.False(fixture.Queue.Status.DeliveryPaused);
+    }
+
+    [Theory]
+    [InlineData(0, " ")]
+    [InlineData(1, "\r\n")]
+    [InlineData(2, "\r\n\r\n")]
+    public async Task SeparatorChoiceAppliesToAutomaticDeliveryAndManualCopy(int choice, string separator)
+    {
+        await using var fixture = new Fixture();
+        fixture.Queue.SetSeparator((DictationSeparator)choice);
+        fixture.StartAndStop();
+        fixture.StartAndStop();
+        fixture.Requests[0].Complete("First.");
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Requests[1].Complete("Second.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(["First.", separator + "Second."], fixture.Delivery.Pastes.Select(paste => paste.Text));
+
+        fixture.Queue.PauseDelivery();
+        fixture.StartAndStop();
+        fixture.StartAndStop();
+        fixture.Requests[2].Complete("Manual first.");
+        await Until(() => fixture.Requests.Count == 4);
+        fixture.Requests[3].Complete("Manual second.");
+        await Until(() => !fixture.Queue.Status.IsTranscribing);
+        fixture.Queue.CopyReadyParagraphs();
+        Assert.Equal("Manual first." + separator + "Manual second.", fixture.Delivery.Clipboard);
+    }
+
+    [Fact]
+    public async Task ChangedSeparatorOnlyAffectsRecordingsAcceptedAfterTheChange()
+    {
+        await using var fixture = new Fixture();
+        fixture.StartAndStop();
+        fixture.StartAndStop();
+        fixture.Queue.SetSeparator(DictationSeparator.Paragraph);
+        fixture.Requests[0].Complete("First.");
+        await Until(() => fixture.Queue.Status.Unfinished == 1);
+        fixture.StartAndStop();
+        fixture.Requests[1].Complete("Second.");
+        await Until(() => fixture.Requests.Count == 3);
+        fixture.Requests[2].Complete("Third.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(["First.", " Second.", "\r\n\r\nThird."], fixture.Delivery.Pastes.Select(paste => paste.Text));
+    }
+
+    [Fact]
+    public async Task PushToTalkStartsOnPressStopsOnReleaseAndIgnoresRepeat()
+    {
+        await using var fixture = new Fixture();
+        var targetReads = 0;
+        var input = new DictationHotkeyController(fixture.Queue, () => { targetReads++; return Target; })
+        {
+            Mode = RecordingMode.PushToTalk
+        };
+        Assert.Equal(HotkeyResult.Started, input.Press());
+        Assert.Null(input.Press());
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        Assert.Empty(fixture.Requests);
+        Assert.Equal(0, targetReads);
+        input.Release();
+        input.Release();
+        await Until(() => fixture.Requests.Count == 1);
+        Assert.Equal(1, targetReads);
+        Assert.Equal(1, fixture.Recorders[0].Stops);
+        fixture.Requests[0].Complete("Held dictation.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+    }
+
+    [Fact]
+    public async Task PushToTalkCanOverlapTranscriptionWithoutDroppingAnAcceptedClip()
+    {
+        await using var fixture = new Fixture();
+        var input = new DictationHotkeyController(fixture.Queue, () => Target) { Mode = RecordingMode.PushToTalk };
+        input.Press();
+        input.Release();
+        Assert.Equal(HotkeyResult.Started, input.Press());
+        Assert.True(fixture.Queue.Status.IsTranscribing);
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        input.Release();
+        Assert.Equal(HotkeyResult.Full, input.Press());
+        input.Release();
+        Assert.Equal(2, fixture.Queue.Status.Unfinished);
+        fixture.Requests[0].Complete("First.");
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Requests[1].Complete("Second.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(1, fixture.MaxRequests);
+        Assert.Equal(["First.", " Second."], fixture.Delivery.Pastes.Select(paste => paste.Text));
+    }
+
+    [Fact]
+    public async Task ReleasingPushToTalkBeforeMicrophoneIsReadyCancelsOnlyEmptyReservation()
+    {
+        await using var fixture = new Fixture { DelayStop = true };
+        var input = new DictationHotkeyController(fixture.Queue, () => Target) { Mode = RecordingMode.PushToTalk };
+        input.Press();
+        input.Release();
+        Assert.Equal(HotkeyResult.StartPending, input.Press());
+        input.Release();
+        Assert.False(fixture.Queue.Status.StartPending);
+        Assert.Equal(1, fixture.Queue.Status.Unfinished);
+        fixture.Recorders[0].FinishStop();
+        await Until(() => fixture.Requests.Count == 1);
+        Assert.Single(fixture.Recorders);
+        Assert.Equal(MicrophoneState.Idle, fixture.Queue.Status.Microphone);
+        fixture.Requests[0].Complete("Keep the accepted clip.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+    }
+
+    [Fact]
+    public async Task HeldPushToTalkReservationStartsAfterStopAndItsReleaseStopsOnlyTheNewClip()
+    {
+        await using var fixture = new Fixture { DelayStop = true };
+        var input = new DictationHotkeyController(fixture.Queue, () => Target) { Mode = RecordingMode.PushToTalk };
+        input.Press();
+        input.Release();
+        Assert.Equal(HotkeyResult.StartPending, input.Press());
+        fixture.Recorders[0].FinishStop();
+        await Until(() => fixture.Recorders.Count == 2);
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        input.Release();
+        Assert.Equal(1, fixture.Recorders[1].Stops);
+        fixture.Recorders[1].FinishStop();
+        await Until(() => fixture.Queue.Status.Microphone == MicrophoneState.Idle);
+        fixture.Requests[0].Complete("First.");
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Requests[1].Complete("Second.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(["clip-1", "clip-2"], fixture.Deleted);
+        Assert.Equal(["First.", " Second."], fixture.Delivery.Pastes.Select(paste => paste.Text));
+    }
+
+    [Fact]
+    public async Task ToggleModeDoesNotStopOnReleaseAndStillUsesSecondPress()
+    {
+        await using var fixture = new Fixture();
+        var input = new DictationHotkeyController(fixture.Queue, () => Target);
+        input.Press();
+        input.Release();
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        Assert.Equal(HotkeyResult.Stopping, input.Press());
+        await Until(() => fixture.Requests.Count == 1);
+    }
+
+    [Fact]
+    public async Task PushToTalkReleaseAfterShutdownHasNoLateEffects()
+    {
+        await using var fixture = new Fixture();
+        var input = new DictationHotkeyController(fixture.Queue, () => throw new InvalidOperationException("Late target read"))
+        {
+            Mode = RecordingMode.PushToTalk
+        };
+        input.Press();
+        await fixture.Queue.ShutdownAsync();
+        input.Release();
+        Assert.Empty(fixture.Requests);
+        Assert.Empty(fixture.Errors);
     }
 
     private sealed class Fixture : IAsyncDisposable

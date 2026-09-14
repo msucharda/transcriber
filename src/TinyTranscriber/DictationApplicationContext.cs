@@ -1,4 +1,5 @@
 using Azure.Identity;
+using System.Text.Json;
 
 namespace TinyTranscriber;
 
@@ -13,12 +14,17 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromMinutes(2) };
     private readonly MaiTranscriptionClient transcriptionClient;
     private readonly ParagraphQueue queue;
+    private readonly DictationHotkeyController hotkeyController;
     private readonly System.Windows.Forms.Timer resumeTimer = new() { Interval = 3000 };
     private readonly ToolStripMenuItem queueItem = new() { Enabled = false };
     private readonly ToolStripMenuItem pauseItem = new("Pause automatic delivery");
     private readonly ToolStripMenuItem copyItem = new("Copy ready paragraphs (pauses)");
     private readonly ToolStripMenuItem acknowledgeItem = new("I pasted the copied paragraphs");
     private readonly ToolStripMenuItem resumeItem = new("Resume delivery in 3 seconds");
+    private readonly ToolStripMenuItem settingsItem = new("Settings...");
+    private readonly DictationPreferencesStore preferencesStore = new(DictationPreferencesStore.DefaultPath);
+    private DictationPreferences preferences = DictationPreferences.Default;
+    private SettingsForm? settingsForm;
     private readonly ToolStripMenuItem exitItem = new("Exit");
     private AudioRecorder? activeRecorder;
     private volatile bool exiting;
@@ -28,6 +34,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         _ = dispatcher.Handle;
         transcriptionClient = new MaiTranscriptionClient(httpClient, new DefaultAzureCredential());
         queue = new ParagraphQueue(CreateRecorder, TranscribeAsync, new WindowsDelivery(), File.Delete);
+        hotkeyController = new DictationHotkeyController(queue, NativeInput.GetActiveWindow);
         hotkeyWindow = new HotkeyWindow(hotkey);
         trayIcons = new TrayIcons();
         notifyIcon = new NotifyIcon
@@ -39,8 +46,10 @@ internal sealed class DictationApplicationContext : ApplicationContext
         notifyIcon.ContextMenuStrip.Items.AddRange(
         [
             queueItem, new ToolStripSeparator(), pauseItem, copyItem, acknowledgeItem, resumeItem,
-            new ToolStripSeparator(), exitItem
+            new ToolStripSeparator(), settingsItem, new ToolStripSeparator(), exitItem
         ]);
+        var preferencesLoaded = LoadPreferences();
+        settingsItem.Click += (_, _) => OpenSettings();
 
         pauseItem.Click += (_, _) => { CancelResume(); queue.PauseDelivery(); };
         copyItem.Click += (_, _) => { CancelResume(); queue.CopyReadyParagraphs(); };
@@ -55,14 +64,70 @@ internal sealed class DictationApplicationContext : ApplicationContext
         queue.Changed += RefreshStatus;
         queue.Error += OnQueueError;
         hotkeyWindow.Pressed += OnHotkeyPressed;
+        hotkeyWindow.Released += OnHotkeyReleased;
         RefreshStatus();
-        ShowMessage(
-            "Tiny Transcriber is ready",
-            $"Press {hotkey.DisplayName} to start or stop a paragraph. You can record the next while one transcribes.",
-            ToolTipIcon.Info);
+        if (preferencesLoaded)
+        {
+            ShowMessage(
+                "Tiny Transcriber is ready",
+                preferences.RecordingMode == RecordingMode.PushToTalk
+                    ? $"Hold {hotkey.DisplayName} to record; release {(Keys)hotkey.VirtualKey} to transcribe."
+                    : $"Press {hotkey.DisplayName} to start or stop dictation. You can record the next while one transcribes.",
+                ToolTipIcon.Info);
+        }
     }
 
     public void RequestExit() => Dispatch(ExitThread);
+
+    private void OpenSettings()
+    {
+        if (settingsForm is not null)
+        {
+            settingsForm.Activate();
+            return;
+        }
+
+        settingsForm = new SettingsForm(preferences, hotkey, next =>
+        {
+            if (queue.Status.Microphone != MicrophoneState.Idle)
+            {
+                throw new InvalidOperationException("Finish the current recording before saving.");
+            }
+
+            preferencesStore.Save(next);
+            preferences = next;
+            ApplyPreferences();
+            RefreshStatus();
+        });
+        settingsForm.FormClosed += (_, _) => settingsForm = null;
+        settingsForm.SetRecordingBusy(queue.Status.Microphone != MicrophoneState.Idle);
+        settingsForm.Show();
+    }
+
+    private bool LoadPreferences()
+    {
+        var loaded = true;
+        try
+        {
+            preferences = preferencesStore.Load();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            loaded = false;
+            ShowMessage("Could not load settings",
+                $"Using toggle recording and same-line continuation. Open Settings to save your choices again.\n{exception.Message}",
+                ToolTipIcon.Warning);
+        }
+
+        ApplyPreferences();
+        return loaded;
+    }
+
+    private void ApplyPreferences()
+    {
+        queue.SetSeparator(preferences.Separator);
+        hotkeyController.Mode = preferences.RecordingMode;
+    }
 
     protected override async void ExitThreadCore()
     {
@@ -75,7 +140,10 @@ internal sealed class DictationApplicationContext : ApplicationContext
         resumeTimer.Stop();
         resumeTimer.Dispose();
         hotkeyWindow.Pressed -= OnHotkeyPressed;
+        hotkeyWindow.Released -= OnHotkeyReleased;
         hotkeyWindow.Dispose();
+        settingsForm?.Dispose();
+        settingsForm = null;
         queue.Changed -= RefreshStatus;
         queue.Error -= OnQueueError;
         statusForm.HideStatus();
@@ -108,13 +176,26 @@ internal sealed class DictationApplicationContext : ApplicationContext
             return;
         }
 
-        var result = queue.HandleHotkey(NativeInput.GetActiveWindow);
+        if (settingsForm?.ContainsFocus == true && queue.Status.Microphone == MicrophoneState.Idle)
+        {
+            return;
+        }
+
+        var result = hotkeyController.Press();
         if (result == HotkeyResult.Full)
         {
             ShowMessage(
                 "Both paragraph slots are busy",
                 "Wait for a paragraph to finish, or recover pending work from the tray. Your accepted audio is kept.",
                 ToolTipIcon.Info);
+        }
+    }
+
+    private void OnHotkeyReleased(object? sender, EventArgs eventArgs)
+    {
+        if (!exiting)
+        {
+            hotkeyController.Release();
         }
     }
 
@@ -156,7 +237,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         }
 
         var status = queue.Status;
-        var presentation = DictationPresentation.From(status, hotkey.DisplayName, resumeTimer.Enabled);
+        var presentation = DictationPresentation.From(status, hotkey.DisplayName, resumeTimer.Enabled, preferences.RecordingMode);
         notifyIcon.Icon = presentation.Recording
             ? trayIcons.Recording
             : presentation.Processing ? trayIcons.Transcribing : trayIcons.Idle;
@@ -167,6 +248,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         copyItem.Enabled = status.CanCopy;
         acknowledgeItem.Enabled = status.CanAcknowledgeCopy;
         resumeItem.Enabled = status.DeliveryPaused && !status.CanAcknowledgeCopy && !resumeTimer.Enabled;
+        settingsForm?.SetRecordingBusy(status.Microphone != MicrophoneState.Idle);
         exitItem.Text = status.Unfinished > 0 ? "Exit (discard pending work)" : "Exit";
     }
 

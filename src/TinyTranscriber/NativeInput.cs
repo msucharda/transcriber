@@ -19,6 +19,10 @@ internal static class NativeInput
         nint targetWindow, string text, CancellationToken cancellationToken = default) =>
         Paste.TryDeliverAsync(targetWindow, text, Clipboard.SetText, cancellationToken);
 
+    internal static bool IsExternalWindow(nint window) => IsWindow(window)
+        && GetWindowThreadProcessId(window, out var processId) != 0
+        && processId != Environment.ProcessId;
+
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
@@ -27,6 +31,9 @@ internal static class NativeInput
 
     [DllImport("user32.dll")]
     private static extern bool IsWindow(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint windowHandle, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int virtualKey);
@@ -77,7 +84,7 @@ internal static class NativeInput
 
     private sealed class WindowsInput : IWindowInput
     {
-        public bool IsWindow(nint window) => NativeInput.IsWindow(window);
+        public bool IsWindow(nint window) => IsExternalWindow(window);
         public nint GetForegroundWindow() => NativeInput.GetForegroundWindow();
         public bool ActivateWindow(nint window) => SetForegroundWindow(window);
         public bool AreModifiersReleased() =>

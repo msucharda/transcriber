@@ -45,10 +45,42 @@ public sealed class ForegroundDeliveryTests
     }
 
     [Fact]
-    public async Task HeldHotkeyModifiersDoNotReplaceClipboardOrInjectModifiedPaste()
+    public async Task HeldHotkeyModifiersWaitWithoutClipboardChangesThenDeliverOnRelease()
     {
         var input = new FakeInput { ModifiersReleased = false };
-        Assert.False(await input.Deliver(Target));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var delivery = input.Deliver(Target, timeout.Token);
+        while (!input.Operations.Contains("modifiers")) { await Task.Delay(5, timeout.Token); }
+        Assert.False(delivery.IsCompleted);
+        Assert.Equal("original", input.Clipboard);
+        Assert.Equal(0, input.Pastes);
+        input.ModifiersReleased = true;
+        Assert.True(await delivery);
+        Assert.Equal(1, input.Pastes);
+    }
+
+    [Fact]
+    public async Task WaitingForModifierReleaseStillFailsClosedOnChangedTarget()
+    {
+        var input = new FakeInput { ModifiersReleased = false };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var delivery = input.Deliver(Target, timeout.Token);
+        while (!input.Operations.Contains("modifiers")) { await Task.Delay(5, timeout.Token); }
+        input.Foreground = 456;
+        Assert.False(await delivery);
+        Assert.Equal("original", input.Clipboard);
+        Assert.Equal(0, input.Pastes);
+    }
+
+    [Fact]
+    public async Task WaitingForModifierReleaseCanBeCanceledWithoutInputOrClipboardChanges()
+    {
+        var input = new FakeInput { ModifiersReleased = false };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var delivery = input.Deliver(Target, cancellation.Token);
+        while (!input.Operations.Contains("modifiers")) { await Task.Delay(5, cancellation.Token); }
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery);
         Assert.Equal("original", input.Clipboard);
         Assert.Equal(0, input.Pastes);
     }
@@ -96,7 +128,7 @@ public sealed class ForegroundDeliveryTests
     {
         public bool Exists { get; set; } = true;
         public nint Foreground { get; set; } = Target;
-        public bool ModifiersReleased { get; init; } = true;
+        public bool ModifiersReleased { get; set; } = true;
         public int ChangeOnRead { get; init; }
         public int CloseOnCheck { get; init; }
         public bool FailInput { get; init; }

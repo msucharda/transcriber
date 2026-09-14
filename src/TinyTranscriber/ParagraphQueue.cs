@@ -49,7 +49,7 @@ internal sealed class ParagraphQueue(
     int capacity = ParagraphQueue.DefaultCapacity)
 {
     public const int DefaultCapacity = 2;
-    public const string Separator = "\r\n\r\n";
+    private string separator = DictationPreferences.Default.SeparatorText;
     private readonly int capacity = capacity > 0
         ? capacity
         : throw new ArgumentOutOfRangeException(nameof(capacity));
@@ -121,7 +121,7 @@ internal sealed class ParagraphQueue(
             lastDelivered = null;
         }
 
-        var item = new Paragraph(burst);
+        var item = new Paragraph(burst, separator);
         paragraphs.Add(item);
         if (recording is not null)
         {
@@ -131,6 +131,32 @@ internal sealed class ParagraphQueue(
         }
 
         return StartRecording(item) ? HotkeyResult.Started : HotkeyResult.Failed;
+    }
+
+    public void SetSeparator(DictationSeparator choice)
+    {
+        separator = new DictationPreferences(choice).SeparatorText;
+    }
+
+    public void StopOrCancelPendingRecording(Func<nint> captureTarget)
+    {
+        if (exiting)
+        {
+            return;
+        }
+
+        if (nextRecording is not null)
+        {
+            paragraphs.Remove(nextRecording);
+            nextRecording = null;
+            Notify();
+            Report("Recording not started", new InvalidOperationException(
+                "The previous recording was still stopping. Hold the shortcut again when the microphone is ready."));
+        }
+        else if (recording?.Stage == Stage.Recording)
+        {
+            HandleHotkey(captureTarget);
+        }
     }
 
     public void PauseDelivery()
@@ -174,7 +200,8 @@ internal sealed class ParagraphQueue(
         try
         {
             // Manual recovery is a fresh block, never a leading blank paragraph.
-            delivery.Copy(string.Join(Separator, ready.Select(item => item.Text)));
+            delivery.Copy(string.Concat(ready.Select((item, index) =>
+                (index == 0 ? string.Empty : item.Separator) + item.Text)));
             copied = ready;
             Notify();
         }
@@ -353,7 +380,7 @@ internal sealed class ParagraphQueue(
                 deliveryAttempt = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
                 try
                 {
-                    var prefix = lastDelivered == (item.Burst, item.Target) ? Separator : string.Empty;
+                    var prefix = lastDelivered == (item.Burst, item.Target) ? item.Separator : string.Empty;
                     if (!await delivery.TryDeliverAsync(item.Target, prefix + item.Text, deliveryAttempt.Token))
                     {
                         throw new InvalidOperationException(
@@ -477,9 +504,10 @@ internal sealed class ParagraphQueue(
 
     private enum Stage { Reserved, Recording, Stopping, Queued, Transcribing, Ready }
 
-    private sealed class Paragraph(long burst)
+    private sealed class Paragraph(long burst, string separator)
     {
         public long Burst { get; } = burst;
+        public string Separator { get; } = separator;
         public Stage Stage { get; set; }
         public nint Target { get; set; }
         public string? AudioPath { get; set; }

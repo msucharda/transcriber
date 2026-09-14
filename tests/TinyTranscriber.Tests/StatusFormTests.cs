@@ -194,7 +194,7 @@ public sealed class StatusFormTests
     private static void Invoke(object target, string name, params object?[] arguments) =>
         target.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, arguments);
 
-    private static void RunSta(Action action)
+    internal static void RunSta(Action action)
     {
         Exception? failure = null;
         var thread = new Thread(() =>

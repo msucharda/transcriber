@@ -75,7 +75,7 @@ Wait for the Listening state before speaking. This is not automatic chunking.
 
 ## "Delivery paused"
 
-The destination was not safely available, modifiers were still held, the
+The destination was not safely available, the
 clipboard was busy, or Windows rejected input. The app retains ordered text,
 does not reactivate the old window, and never pastes later paragraphs ahead of it.
 
@@ -110,6 +110,27 @@ pending in-memory text, and delete owned recordings. There is no save prompt,
 recording archive, or recovery on the next launch. Failed transcriptions clean up
 their audio immediately. A crash, force termination, or cleanup error can leave
 a WAV behind; see [privacy and cleanup guidance](privacy.md).
+
+## Push-to-talk or spacing does not behave as expected
+
+Open tray **Settings...**, choose the recording mode and the separator under
+**Between queued dictations**, and choose **Save**. The default is toggle
+recording with a space between overlapping dictations, not a new paragraph.
+Separator changes apply only to recordings accepted after the change.
+
+Push-to-talk stops when you release the main shortcut key (Space by default),
+not when you release only its modifiers. Wait for Listening before speaking.
+If you release before the previous recording has released the microphone, that
+empty reservation is canceled and reported; no recording starts afterward.
+**Ready to insert** means the result may be waiting for shortcut modifiers to
+be released. Release Ctrl/Shift/Alt/Win as well; no clipboard change or modified
+paste is attempted while they remain held.
+
+Save is disabled while a recording is active/stopping. Failed saves keep the
+settings window open and leave the previous choices unchanged. If the saved
+preferences cannot be read, the app reports this and uses toggle/space defaults
+for that session; save your choices again after resolving the indicated file
+problem. The preferences file holds no audio or transcript history.
 
 ## Windows or your organization blocks the executable
 

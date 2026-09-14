@@ -24,10 +24,21 @@ internal sealed class ForegroundPaste(IWindowInput input)
         }
 
         await Task.Delay(75, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!IsForegroundTarget(targetWindow) || !input.AreModifiersReleased())
+        while (true)
         {
-            return false;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsForegroundTarget(targetWindow))
+            {
+                return false;
+            }
+
+            if (input.AreModifiersReleased())
+            {
+                break;
+            }
+
+            // Holding a push-to-talk chord is expected, not a delivery failure.
+            await Task.Delay(25, cancellationToken);
         }
 
         copy(text);

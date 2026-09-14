@@ -2,7 +2,9 @@
 
 Tiny Transcriber listens for its keyboard shortcut, not continuously for speech.
 It opens the default microphone when you start recording and stops it when you
-press the shortcut again.
+press the shortcut again, or release the main shortcut key in push-to-talk mode.
+While the shortcut is held, the app checks that key's pressed state; it does not
+record typed text or install a keyboard-logging hook.
 
 This describes the next-version source's two-paragraph workflow, not the
 published v0.1.0 binary.
@@ -31,6 +33,9 @@ published v0.1.0 binary.
    owned files after pending requests release their streams. Pending text,
    and recordings are not recoverable after exit. There is no
    saved queue, transcript database, automatic retry, or application analytics.
+7. Recording mode and separator choices are saved in
+   `%LOCALAPPDATA%\TinyTranscriber\preferences.json`. This small preferences file
+   contains no audio, transcripts, Azure endpoint, or credentials.
 
 ## Important limits
 

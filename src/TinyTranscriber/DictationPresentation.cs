@@ -8,7 +8,8 @@ internal sealed record DictationPresentation(
     bool BackgroundTranscription = false,
     bool Visible = true)
 {
-    public static DictationPresentation From(ParagraphQueueStatus status, string shortcut, bool resuming = false)
+    public static DictationPresentation From(
+        ParagraphQueueStatus status, string shortcut, bool resuming = false, RecordingMode mode = RecordingMode.Toggle)
     {
         var count = $"{status.Unfinished}/{status.Capacity}";
         if (status.Microphone != MicrophoneState.Idle)
@@ -16,6 +17,7 @@ internal sealed record DictationPresentation(
             var detail = status.Microphone == MicrophoneState.Stopping
                 ? status.StartPending ? "Next paragraph starts shortly" : "Finishing microphone capture"
                 : status.DeliveryPaused ? "Delivery paused - recover from tray"
+                : mode == RecordingMode.PushToTalk ? $"Release {shortcut.Split('+')[^1]} to transcribe"
                 : $"{shortcut} to stop";
             return new($"Listening  {count}", detail, Recording: true,
                 BackgroundTranscription: status.IsTranscribing && !status.DeliveryPaused);
@@ -33,11 +35,12 @@ internal sealed record DictationPresentation(
         {
             return new("Transcribing", status.Unfinished == status.Capacity
                 ? $"{count} occupied - waiting for a slot"
+                : mode == RecordingMode.PushToTalk ? $"Hold {shortcut} for next"
                 : $"{shortcut} for next paragraph", Processing: true);
         }
 
         return status.Unfinished > 0
-            ? new("Delivering", $"{count} occupied - checking destination")
-            : new("Ready", $"{shortcut} to record", Visible: false);
+            ? new("Ready to insert", "Release shortcut keys to insert")
+            : new("Ready", $"{(mode == RecordingMode.PushToTalk ? "Hold " : "")}{shortcut} to record", Visible: false);
     }
 }
