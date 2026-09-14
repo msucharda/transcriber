@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TinyTranscriber</AssemblyName>
     <RootNamespace>TinyTranscriber</RootNamespace>
+    <ApplicationIcon>Assets\TinyTranscriber.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +18,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="TinyTranscriber.Tests" />
+    <EmbeddedResource Include="Assets\*.ico" />
   </ItemGroup>
 
 </Project>

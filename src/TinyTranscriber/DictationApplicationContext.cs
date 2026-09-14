@@ -7,6 +7,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon notifyIcon;
     private readonly HotkeyWindow hotkeyWindow;
+    private readonly TrayIcons trayIcons;
     private readonly HotkeyDefinition hotkey = HotkeyDefinition.Load();
     private readonly StatusForm statusForm = new();
     private readonly AudioRecorder recorder = new();
@@ -20,19 +21,20 @@ internal sealed class DictationApplicationContext : ApplicationContext
 
     public DictationApplicationContext()
     {
+        hotkeyWindow = new HotkeyWindow(hotkey);
+        trayIcons = new TrayIcons();
         var exitItem = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitThread();
 
         notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = trayIcons.Idle,
             Text = $"Tiny Transcriber - {hotkey.DisplayName} to record",
             ContextMenuStrip = new ContextMenuStrip(),
             Visible = true
         };
         notifyIcon.ContextMenuStrip.Items.Add(exitItem);
 
-        hotkeyWindow = new HotkeyWindow(hotkey);
         hotkeyWindow.Pressed += OnHotkeyPressed;
         recorder.LevelChanged += OnAudioLevelChanged;
 
@@ -51,6 +53,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         statusForm.Dispose();
         notifyIcon.Visible = false;
         notifyIcon.Dispose();
+        trayIcons.Dispose();
         base.ExitThreadCore();
     }
 
@@ -73,8 +76,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         }
         catch (Exception exception)
         {
-            state = DictationState.Idle;
-            notifyIcon.Text = $"Tiny Transcriber - {hotkey.DisplayName} to record";
+            SetState(DictationState.Idle);
             statusForm.HideStatus();
             ShowMessage("Dictation failed", exception.Message, ToolTipIcon.Error);
         }
@@ -88,16 +90,14 @@ internal sealed class DictationApplicationContext : ApplicationContext
         }
 
         recorder.Start();
-        state = DictationState.Recording;
-        notifyIcon.Text = "Tiny Transcriber - recording";
+        SetState(DictationState.Recording);
         statusForm.ShowRecording(hotkey.DisplayName);
         SystemSounds.Asterisk.Play();
     }
 
     private async Task StopTranscribeAndPasteAsync()
     {
-        state = DictationState.Transcribing;
-        notifyIcon.Text = "Tiny Transcriber - transcribing";
+        SetState(DictationState.Transcribing);
         statusForm.ShowTranscribing();
         var targetWindow = NativeInput.GetActiveWindow();
         string? audioPath = null;
@@ -123,10 +123,23 @@ internal sealed class DictationApplicationContext : ApplicationContext
                 File.Delete(audioPath);
             }
 
-            state = DictationState.Idle;
-            notifyIcon.Text = $"Tiny Transcriber - {hotkey.DisplayName} to record";
+            SetState(DictationState.Idle);
             statusForm.HideStatus();
         }
+    }
+
+    private void SetState(DictationState nextState)
+    {
+        var (icon, text) = nextState switch
+        {
+            DictationState.Idle => (trayIcons.Idle, $"Tiny Transcriber - {hotkey.DisplayName} to record"),
+            DictationState.Recording => (trayIcons.Recording, "Tiny Transcriber - recording"),
+            DictationState.Transcribing => (trayIcons.Transcribing, "Tiny Transcriber - transcribing"),
+            _ => throw new ArgumentOutOfRangeException(nameof(nextState))
+        };
+        state = nextState;
+        notifyIcon.Icon = icon;
+        notifyIcon.Text = text;
     }
 
     private void ShowMessage(string title, string text, ToolTipIcon icon)
