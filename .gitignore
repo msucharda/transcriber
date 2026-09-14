@@ -2,4 +2,7 @@ bin/
 obj/
 *.user
 .vs/
-
+artifacts/
+TestResults/
+.env
+.env.*
