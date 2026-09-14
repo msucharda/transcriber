@@ -26,12 +26,14 @@ Self-contained EXEs include a .NET runtime, so updating a separately installed
 - Microsoft Entra ID is the recommended authentication method. Deployment
   templates disable local/API-key authentication and assign an account-scoped
   role. Never commit credentials or include them in release assets.
-- The temporary WAV is not application-encrypted. Normal completion and handled
-  failures clean it up; a crash, forced termination, or disk/access error can
-  leave recordings behind. See [privacy guidance](docs/privacy.md).
+- The temporary WAV is not application-encrypted. Successful transcription
+  cleans it up; failed transcription in the next-version queue retains it for
+  explicit retry/discard until exit. A crash, forced termination, or disk/access
+  error can leave recordings behind. See [privacy guidance](docs/privacy.md).
 - Transcripts go through the Windows clipboard. Other software, clipboard
   history, and clipboard sync may access or retain them.
-- Automatic paste checks the target HWND and foreground focus, but it cannot
+- Next-version automatic delivery never activates a background window. It
+  checks the target HWND and foreground focus before clipboard/input, but cannot
   authenticate a browser tab, document, or text field. A narrow focus race is
   still possible. Stay in the intended field until completion and check the
   result before sending or executing it.

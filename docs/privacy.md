@@ -4,20 +4,32 @@ Tiny Transcriber listens for its keyboard shortcut, not continuously for speech.
 It opens the default microphone when you start recording and stops it when you
 press the shortcut again.
 
+This describes the next-version source's two-paragraph workflow, not the
+published v0.1.0 binary.
+
 1. Audio is recorded as a 16 kHz, 16-bit, mono WAV in your Windows temporary
    directory, with a name like `tiny-transcriber-<random-id>.wav`.
-2. The WAV is sent over HTTPS to the Azure Speech endpoint you configured.
+2. At most two unfinished paragraphs are kept, counting the active recording.
+   A stopped WAV may wait for the previous request. Only one WAV at a time is
+   sent over HTTPS to the Azure Speech endpoint you configured.
    Microsoft Entra ID supplies a Cognitive Services access token. If you
    explicitly configure an API key instead, that key takes precedence.
 3. Azure Speech returns text. There is no additional chat model or rewriting
    service in the app.
-4. The text replaces the current clipboard contents. The app attempts to
-   reactivate and check the window where you stopped dictating, then sends
-   Ctrl+V. If the destination cannot be verified, it skips automatic paste and
-   asks you to paste manually.
-5. The temporary recording is deleted on the normal path, including handled
-   transcription failures. The app does not intentionally keep a transcript
-   history or send application analytics.
+4. The app checks that the window where you stopped dictating still exists and
+   is **already foreground** before replacing the clipboard and sending Ctrl+V.
+   It never reactivates that window. A failed check leaves the clipboard alone
+   and pauses delivery; ordered text stays in memory for tray recovery.
+   Explicit **Copy ready paragraphs (pauses)** also replaces the clipboard and
+   keeps delivery paused until acknowledgement and explicit resume.
+5. Successful transcription deletes its WAV. A transcription failure retains
+   the owned WAV for explicit retry or discard, blocking later requests.
+   Clipboard/input failure retains the text rather than silently dropping it.
+   These items continue to occupy the two available slots.
+6. **Exit** and console Ctrl+C cancel work and clean up only this instance's
+   owned files after pending requests release their streams. Pending text,
+   failed clips, and recordings are not recoverable after exit. There is no
+   saved queue, transcript database, automatic retry, or application analytics.
 
 ## Important limits
 
@@ -32,18 +44,27 @@ press the shortcut again.
 - **Local audio:** WAV files are not encrypted by the app. User-profile/temp
   permissions and device encryption are OS protections, not app guarantees.
   A crash, forced stop, or cleanup failure can leave a WAV in `%TEMP%`.
+  Failed transcription deliberately extends its lifetime until you retry,
+  discard, or exit; there is no automatic expiration while the app runs.
   Inspect only files with this app's `tiny-transcriber-` prefix when cleaning up;
   do not delete your entire temporary directory.
 - **Clipboard:** Windows clipboard history, cross-device sync, remote-desktop
   clipboard forwarding, and other applications may retain or read dictated
-  text. The previous clipboard contents are not restored.
+  text. The previous clipboard contents are not restored. A focus change or
+  cancellation during the clipboard write can leave copied text without a
+  paste; the final foreground check prevents the subsequent input when possible.
 - **Paste destination:** checking a window is not checking a field or browser
-  tab. Keep your intended destination selected until completion. Review text
+  tab, nor authenticating the window against handle reuse. No foreground check
+  can eliminate the final input race or confirm actual insertion into a field.
+  Keep your intended destination selected until completion. Review text
   before submitting it, especially commands, numbers, and names.
 - **Credentials:** `DefaultAzureCredential` can use supported developer
   credentials other than Azure CLI. Confirm you are using the intended Azure
   identity and tenant. Environment-variable API keys are not a secure secret
   store; prefer Entra ID and do not share terminal dumps or `.env` files.
+
+See [the queue and recovery guide](../README.md#dictate-the-next-paragraph-without-waiting)
+for exact ordering, separators, copy acknowledgement, and resume semantics.
 
 The app requires permission to use your microphone, Azure resource, and target
 application. It does not obtain other people's consent for you; obtain any

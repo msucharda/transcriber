@@ -8,6 +8,9 @@ Tiny Transcriber is a small WinForms tray app using Azure Speech
 **MAI-Transcribe-2**. It has a microphone-responsive status pill, state-aware tray
 icons, and no main window. Audio is recorded only after you start dictation.
 
+> **Next-version source:** the queued paragraph workflow below is a follow-up
+> to v0.1.0. It is not included in the already published v0.1.0 binaries.
+
 > This is an experimental, cloud-based tool. MAI-Transcribe-2 is an Azure public
 > preview. You need your own Azure resource and pay Azure's usage charges.
 > It is not offline, and transcription accuracy is not guaranteed.
@@ -65,16 +68,85 @@ skip provisioning and use its endpoint.
    area, possibly under **Show hidden icons**.
 4. Open a text field, for example in Notepad. Press **Ctrl+Shift+Space**, speak a
    short Czech or English sentence, then press the shortcut again.
-5. Keep the intended field selected until transcription finishes. The app copies
-   the text and attempts to paste it. If it cannot verify the destination window,
-   it leaves the text on the clipboard and tells you to paste manually.
+5. Keep the intended field selected until transcription finishes. The app checks
+   that the destination is already foreground before copying and pasting. If it
+   cannot deliver safely, it retains the text and pauses delivery; use the tray
+   recovery actions below.
 
 The window where you **stop** recording is the paste target. Window-level
 checks cannot distinguish browser tabs or individual fields, and focus can still
 change after a check. Review the result before sending or executing it.
 
-Right-click the tray icon and choose **Exit** to quit. When running from a
-terminal with `dotnet run`, Ctrl+C requests shutdown.
+## Dictate the next paragraph without waiting
+
+Press **Ctrl+Shift+Space** to start paragraph A, again to stop it, and again to
+record B while A transcribes. There is one microphone capture and at most **one
+Speech request** at a time. **Two unfinished paragraphs total** are allowed,
+including recording, stopping, waiting, transcribing, failed, and undelivered
+work. This is not a long recording backlog or an interview mode.
+
+Capacity is reserved when recording is accepted. Stopping B while A is still
+busy always keeps B as the single waiting paragraph. A new C is refused with a
+visible waiting notification until a slot becomes free; accepted audio is never
+dropped to make room. If you press again during the brief microphone-stopping
+transition, one next recording is reserved when capacity permits and starts
+when the device is released. Further presses during that transition do not
+queue more toggles. Wait for **Listening** before speaking.
+
+The real volume bars and recording tray icon stay primary. When a previous
+paragraph is genuinely transcribing, the Listening pill also shows a subtle blue
+tint, a **Transcribing** label, and small moving dots on the right. Its completion
+does not reset the meter or hide a newer recording. Paused/error states are
+static; Windows reduced-animation and high-contrast preferences are respected
+at startup. No completion sound is played into a recording.
+
+**Order and separators:** accepted paragraphs are transcribed and delivered
+FIFO. Each one's destination is captured when you press to **stop** it, before
+the asynchronous device stop. A burst continues while any paragraph remains
+unfinished; a recording accepted after the count reaches zero starts a new
+burst. Consecutive automatic deliveries in the same burst to the same captured
+window are separated by exactly two Windows newlines (`\r\n\r\n`). The first
+delivery, a different target, and a new burst have no added leading separator.
+The returned transcript itself is not rewritten or trimmed.
+
+### Recover pending work from the tray
+
+Automatic delivery **never activates an old window**. The original window must
+still exist and already be foreground, with keyboard modifiers released. A failed
+destination check, clipboard operation, or input operation pauses delivery and
+retains the result; later paragraphs cannot paste ahead of it. Already accepted
+audio may finish transcribing while delivery is paused, within the two-slot
+limit. Transcription failure blocks subsequent requests until retry or discard.
+
+Right-click the tray icon:
+
+| Action | Effect |
+|---|---|
+| **Pause automatic delivery** | Keep results without any further automatic clipboard changes or paste attempts. |
+| **Copy ready paragraphs (pauses)** | Copy the consecutive ready results at the front as one block, separated by blank lines, regardless of their original targets. No leading blank line is added. Failed/not-yet-ready audio is not skipped. Work remains counted and automatic delivery stays paused. |
+| **I pasted the copied paragraphs** | After you paste manually, remove **only the last successfully copied snapshot**, not results completed afterward. This does not resume delivery. |
+| **Resume delivery in 3 seconds** | Explicitly re-enable delivery after a short delay to select the original field. It does not retarget or activate anything. Unacknowledged copied text must be acknowledged first. |
+| **Retry failed paragraph** | Retry its retained WAV once, in its original position. No automatic/endless retries. |
+| **Discard failed recording...** | Confirm deletion of that failed item; other work remains and delivery stays paused until you resume. |
+
+If copying fails, results remain available. Copying never authorizes automatic
+delivery to overwrite your clipboard before your manual paste. Acknowledging a
+manual copy resets automatic separator continuity; add spacing manually when
+combining separately copied blocks. Review the destination before retrying an
+input failure: Windows can accept only part of the key sequence, and the app
+cannot confirm whether a text field actually inserted the text.
+
+Window checks **cannot isolate fields, documents, or browser tabs inside one
+HWND**, detect a reused handle, or eliminate the final focus race. When a check
+already fails, the clipboard is untouched. A focus/cancellation change during
+the clipboard write can still leave the transcript on the clipboard without
+pasting. Check the field and clipboard rather than assuming insertion.
+
+Right-click **Exit** (**Exit (discard pending work)** when busy) to quit. When
+running from a terminal with `dotnet run`, Ctrl+C requests the same shutdown.
+Neither prompts to save: pending audio/text is discarded, requests are canceled,
+and owned temporary WAVs are cleaned up after the request releases them. There
+is **no recovery after app exit** or permanent transcript/audio archive.
 
 ## Settings
 
@@ -105,8 +177,10 @@ keys or enable local authentication to get around organizational policy.
 
 The app records a temporary 16 kHz mono WAV, sends it over HTTPS to your
 configured Azure Speech service, and puts the returned text on the Windows
-clipboard. Normal completion and handled failures delete the WAV; abnormal
-termination can leave a recording behind.
+clipboard only for guarded delivery or explicit copy. Successful transcription
+deletes its WAV; failed transcription retains it for retry/discard while the app
+is running. Pending text exists only in memory until delivery, manual
+acknowledgement, or exit. Abnormal termination or cleanup failure can leave a WAV.
 
 MAI's `clean` transcription style is enabled, and `locales` is intentionally
 omitted for automatic language detection and code switching. There is **no
@@ -143,7 +217,7 @@ required at runtime.
 ## Help, security, and license
 
 - [Troubleshooting](docs/troubleshooting.md): shortcut conflicts, microphone
-  setup, Azure errors, clipboard fallback, and Windows trust warnings.
+  setup, Azure errors, queued-paragraph recovery, and Windows trust warnings.
 - [Report a bug](https://github.com/msucharda/transcriber/issues) using synthetic
   text and without credentials or recordings.
 - [Security policy](SECURITY.md): private vulnerability reporting and limitations.

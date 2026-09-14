@@ -1,5 +1,8 @@
 # Troubleshooting
 
+The queue/recovery instructions describe next-version source. Published v0.1.0
+still requires waiting for a transcription before recording the next paragraph.
+
 ## The shortcut is already registered
 
 Another program or input method may own `Ctrl+Shift+Space`. Exit Tiny Transcriber,
@@ -46,19 +49,63 @@ enabling API keys. HTTP 429 indicates service throttling/quota constraints.
 Shorter recordings and waiting before trying again may help, but do not fix
 missing permissions or unsupported regions.
 
-Failed recordings are normally deleted; there is no automatic retry or saved
-audio queue. Record again when the underlying issue is resolved.
+Failed transcriptions keep their WAV while this app instance runs. Correct the
+underlying problem, then use **Retry failed paragraph** from the tray for one
+explicit retry, or **Discard failed recording...** to delete it. Subsequent
+paragraphs do not transcribe ahead of a failed item. Retry can incur another
+Azure charge, including after a timeout with an uncertain server outcome.
+If transcription succeeded but deleting its WAV failed, retry attempts cleanup
+without sending that audio again.
 
-## "Transcript copied, not pasted"
+## "Both paragraph slots are busy"
 
-The app could not verify the destination window. It deliberately did not send
-Ctrl+V. Select the intended field and paste manually. Other applications may
+The maximum is **two unfinished paragraphs including any recording**. One can
+be recorded while the previous one transcribes. If you stop B before A finishes,
+B waits and another C cannot start yet. Failed or paused work also counts.
+Your already accepted audio is retained. Wait for a slot or recover work from
+the tray; repeatedly pressing the shortcut cannot expand the backlog.
+
+A shortcut pressed during microphone stopping reserves at most one next capture
+if a slot is free; further presses during this brief transition are ignored.
+Wait for the Listening state before speaking. This is not automatic chunking.
+
+## "Delivery paused"
+
+The destination was not safely available, modifiers were still held, the
+clipboard was busy, or Windows rejected input. The app retains ordered text,
+does not reactivate the old window, and never pastes later paragraphs ahead of it.
+
+To keep the original destination, choose **Resume delivery in 3 seconds**, then
+select the intended field in that original window and release shortcut keys.
+If that window was closed, automatic delivery will not retarget another one.
+
+For manual recovery, choose **Copy ready paragraphs (pauses)**, select a field
+and paste, then choose **I pasted the copied paragraphs**. Only the successfully
+copied snapshot is removed; results that finish afterward remain pending.
+Delivery stays paused until you explicitly resume it. Copying again replaces
+the clipboard with the current ready block, so do not acknowledge a copy that
+you have not actually pasted. A failed copy keeps all results.
+
+Input failure may mean partial injection, so inspect the field before retrying
+to avoid duplicates. A successful input call is not confirmation of insertion
+by the target application. Other applications may
 restrict synthetic keyboard input, including elevated/admin applications;
 do not run Tiny Transcriber as administrator just to work around this.
 
 If a successful paste goes to the wrong field or browser tab within the same
 window, undo it there and check the destination before trying again.
 Window checks cannot distinguish individual fields or tabs.
+The clipboard is not changed when an initial destination check fails, but focus
+can change during a clipboard write or after the final input check. In that case
+text may be on the clipboard without a paste; prior clipboard data is not restored.
+
+## Exiting with unfinished paragraphs
+
+Tray **Exit (discard pending work)** and terminal Ctrl+C cancel requests, discard
+pending in-memory text, and delete owned recordings. There is no save prompt,
+recording archive, or recovery on the next launch. Transcription failures retain
+audio only while running. A crash, force termination, or cleanup error can leave
+a WAV behind; see [privacy and cleanup guidance](privacy.md).
 
 ## Windows or your organization blocks the executable
 
