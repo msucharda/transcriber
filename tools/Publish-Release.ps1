@@ -16,7 +16,7 @@ if (Test-Path -LiteralPath $destination) {
 }
 
 foreach ($relativePath in @(
-    'README.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'global.json',
+    'README.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'global.json', 'NuGet.config',
     'docs\azure-setup.md', 'docs\releasing.md', 'tools\Deploy-Speech.ps1', 'infra\main.bicep',
     'src\TinyTranscriber\packages.lock.json', 'tests\TinyTranscriber.Tests\packages.lock.json'
 )) {
@@ -39,6 +39,30 @@ try {
     $expectedSdk = (Get-Content -LiteralPath '.\global.json' -Raw | ConvertFrom-Json).sdk.version
     if ($sdk -cne $expectedSdk) { throw "Expected SDK $expectedSdk, got $sdk." }
 
+    $publicFeed = 'https://api.nuget.org/v3/index.json'
+    $nugetConfig = [xml](Get-Content -LiteralPath '.\NuGet.config' -Raw)
+    foreach ($sectionName in 'packageSources', 'auditSources') {
+        $section = $nugetConfig.configuration.SelectSingleNode($sectionName)
+        if ($null -eq $section -or $section.SelectNodes('clear').Count -ne 1 -or
+            $section.SelectNodes('add').Count -ne 1 -or $section.add.value -cne $publicFeed) {
+            throw "NuGet.config must clear $sectionName and specify only the official public NuGet feed."
+        }
+    }
+    $effectiveSources = @(Invoke-ReleaseNative dotnet @('nuget', 'list', 'source', '--format', 'short') |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($effectiveSources.Count -ne 1 -or $effectiveSources[0] -cne "E $publicFeed") {
+        throw 'Public nuget.org must be enabled in the effective NuGet configuration. No sources were changed and no restore was attempted.'
+    }
+    $appProject = '.\src\TinyTranscriber\TinyTranscriber.csproj'
+    $auditProperties = @('-p:NuGetAudit=true', '-p:NuGetAuditMode=all', '-p:NuGetAuditLevel=low')
+    $auditSettings = Invoke-ReleaseNative dotnet (@(
+        'msbuild', $appProject, '-nologo', '-getProperty:NuGetAudit,NuGetAuditMode,NuGetAuditLevel'
+    ) + $auditProperties) | ConvertFrom-Json
+    if ($auditSettings.Properties.NuGetAudit -ine 'true' -or
+        $auditSettings.Properties.NuGetAuditMode -ine 'all' -or $auditSettings.Properties.NuGetAuditLevel -ine 'low') {
+        throw 'Effective restore properties must enable all-dependency NuGet auditing at every severity.'
+    }
+
     foreach ($script in Get-ChildItem -LiteralPath '.\tools' -Filter '*.ps1' -File) {
         $parseErrors = $null
         $null = [Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref] $null, [ref] $parseErrors)
@@ -50,17 +74,15 @@ try {
     )
 
     $auditArguments = @(
-        '--locked-mode', '--no-http-cache',
-        '-p:NuGetAudit=true', '-p:NuGetAuditMode=all', '-p:NuGetAuditLevel=low',
+        '--locked-mode', '--no-http-cache', '--source', $publicFeed,
         '-warnaserror:NU1900,NU1901,NU1902,NU1903,NU1904,NU1905'
-    )
+    ) + $auditProperties
     Invoke-ReleaseNative dotnet (@('restore', '.\TinyTranscriber.slnx') + $auditArguments)
     Invoke-ReleaseNative dotnet @(
         'test', '.\TinyTranscriber.slnx', '--configuration', 'Release', '--no-restore',
         '--logger', 'trx', '--results-directory', (Join-Path $stage 'test-results')
     )
 
-    $appProject = '.\src\TinyTranscriber\TinyTranscriber.csproj'
     $publishProperties = @(
         '--runtime', 'win-x64', '-p:SelfContained=true', '-p:PublishSingleFile=true',
         '-p:IncludeNativeLibrariesForSelfExtract=true'

@@ -39,6 +39,8 @@ $global:TinyTranscriberReleaseTestMock = @{
     CorruptDownload = $false
     MoveTag = $false
     TagReads = 0
+    SourceState = 'E https://api.nuget.org/v3/index.json'
+    AuditEnabled = 'true'
 }
 
 # Child scripts resolve these functions, never real native tools or network APIs.
@@ -54,6 +56,16 @@ function dotnet {
     $global:TinyTranscriberReleaseTestMock.Calls.Add("dotnet $($args -join ' ')")
     if ($global:TinyTranscriberReleaseTestMock.FailCommand -eq "dotnet $($args[0])") { $global:LASTEXITCODE = 9; return }
     if ($args[0] -eq '--version') { return '10.0.401' }
+    if ($args[0] -eq 'nuget') { return $global:TinyTranscriberReleaseTestMock.SourceState }
+    if ($args[0] -eq 'msbuild') {
+        return @{
+            Properties = @{
+                NuGetAudit = $global:TinyTranscriberReleaseTestMock.AuditEnabled
+                NuGetAuditMode = 'all'
+                NuGetAuditLevel = 'low'
+            }
+        } | ConvertTo-Json -Compress
+    }
     if ($args[0] -eq 'publish') {
         $output = $args[[array]::IndexOf($args, '--output') + 1]
         $null = New-Item -ItemType Directory -Path $output -Force
@@ -135,6 +147,8 @@ try {
         'fixture' | Set-Content -LiteralPath (Join-Path $fixture $name)
     }
     '{"sdk":{"version":"10.0.401"}}' | Set-Content -LiteralPath (Join-Path $fixture 'global.json')
+    '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources><auditSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></auditSources></configuration>' |
+        Set-Content -LiteralPath (Join-Path $fixture 'NuGet.config')
     $cache = Join-Path $fixture 'cache'
     $dependencies = @()
     foreach ($id in 'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64') {
@@ -177,9 +191,21 @@ try {
     Assert-Condition ($restoreCalls.Count -eq 2) 'Expected solution and publish-specific restore.'
     foreach ($call in $restoreCalls) {
         Assert-Condition ($call.Contains('--locked-mode') -and $call.Contains('--no-http-cache') -and
+            $call.Contains('--source https://api.nuget.org/v3/index.json') -and
             $call.Contains('NuGetAuditMode=all') -and $call.Contains('NU1900,NU1901,NU1902,NU1903,NU1904,NU1905')) 'Restore is not fail-closed.'
     }
     Assert-Failure { & $build -Version '1.2.3' -OutputDirectory $output } 'Existing output was overwritten.'
+    foreach ($sourceState in 'D https://api.nuget.org/v3/index.json', '', 'E https://example.invalid/feed.json') {
+        $global:TinyTranscriberReleaseTestMock.SourceState = $sourceState
+        $previousRestores = @($global:TinyTranscriberReleaseTestMock.Calls | Where-Object { $_.StartsWith('dotnet restore ') }).Count
+        Assert-Failure { & $build -Version '1.2.4' -OutputDirectory $output } 'Missing/disabled/nonpublic source was accepted.'
+        $currentRestores = @($global:TinyTranscriberReleaseTestMock.Calls | Where-Object { $_.StartsWith('dotnet restore ') }).Count
+        Assert-Condition ($currentRestores -eq $previousRestores) 'Restore ran without an active public source.'
+    }
+    $global:TinyTranscriberReleaseTestMock.SourceState = 'E https://api.nuget.org/v3/index.json'
+    $global:TinyTranscriberReleaseTestMock.AuditEnabled = 'false'
+    Assert-Failure { & $build -Version '1.2.4' -OutputDirectory $output } 'Disabled effective auditing was accepted.'
+    $global:TinyTranscriberReleaseTestMock.AuditEnabled = 'true'
     $global:TinyTranscriberReleaseTestMock.FailCommand = 'dotnet restore'
     Assert-Failure { & $build -Version '1.2.4' -OutputDirectory $output } 'Restore/audit failure did not stop packaging.'
     $global:TinyTranscriberReleaseTestMock.FailCommand = 'dotnet test'
@@ -230,7 +256,7 @@ try {
     Assert-Condition ([bool] $global:TinyTranscriberReleaseTestMock.Release.prerelease) 'Prerelease tag was published as stable.'
     Assert-Condition ($global:TinyTranscriberReleaseTestMock.Calls[-2].Contains('--latest=false')) 'Prerelease could become latest.'
     Assert-Condition (Test-Path -LiteralPath $sentinel) 'Publishing removed unrelated output.'
-    Write-Output 'PASS: versions, package layout/notices/checksums, locked audit flags, native failures, overwrite guards, draft upload/download verification, and moved-tag rejection (offline mocks).'
+    Write-Output 'PASS: versions, package layout/notices/checksums, active public source and auditing, locked audit flags, native failures, overwrite guards, draft verification, and moved-tag rejection (offline mocks).'
 }
 finally {
     $env:GH_HOST = $originalGitHubHost

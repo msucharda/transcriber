@@ -75,6 +75,15 @@ NU1900–NU1905 are errors, including unavailable audit sources; a missing sourc
 lockfile drift, failed command, missing documentation, or missing runtime
 notices aborts the build. It does not suppress or ignore audit failures.
 
+Before any restore, the script validates the checked-in package/audit source
+configuration, checks the **effective merged** NuGet source list for enabled
+public nuget.org, and evaluates the actual MSBuild audit properties. A user-level
+configuration disabling `nuget.org` therefore fails explicitly rather than
+silently auditing against zero sources. The script never enables sources,
+changes user configuration, or falls back to a mirror. Both restores explicitly
+select public nuget.org. TLS or vulnerability-service failures remain errors;
+local builds using a mirror are not evidence that the public-feed audit passed.
+
 Output is `artifacts\TinyTranscriber-1.2.3-win-x64\` with the six assets above.
 Existing output for that version is never overwritten. Use a different output
 root to repeat a local build. Staging happens in a fresh, uniquely named
