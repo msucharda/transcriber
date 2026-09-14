@@ -1,14 +1,19 @@
 namespace TinyTranscriber;
 
-internal sealed record AppSettings(Uri Endpoint, string? SubscriptionKey)
+internal sealed record AppSettings(
+    Uri Endpoint,
+    string? SubscriptionKey,
+    string? CleanupDeployment = null)
 {
     public const string EndpointVariable = "AZURE_SPEECH_ENDPOINT";
     public const string KeyVariable = "AZURE_SPEECH_KEY";
+    public const string CleanupDeploymentVariable = "TINY_TRANSCRIBER_CLEANUP_DEPLOYMENT";
 
     public static bool TryLoad(out AppSettings? settings, out string? error)
     {
         var endpointValue = Environment.GetEnvironmentVariable(EndpointVariable)?.Trim();
         var key = Environment.GetEnvironmentVariable(KeyVariable)?.Trim();
+        var cleanupDeployment = Environment.GetEnvironmentVariable(CleanupDeploymentVariable)?.Trim();
 
         if (string.IsNullOrWhiteSpace(endpointValue))
         {
@@ -25,7 +30,10 @@ internal sealed record AppSettings(Uri Endpoint, string? SubscriptionKey)
             return false;
         }
 
-        settings = new AppSettings(endpoint, string.IsNullOrWhiteSpace(key) ? null : key);
+        settings = new AppSettings(
+            endpoint,
+            string.IsNullOrWhiteSpace(key) ? null : key,
+            string.IsNullOrWhiteSpace(cleanupDeployment) ? null : cleanupDeployment);
         error = null;
         return true;
     }
