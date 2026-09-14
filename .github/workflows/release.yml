@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    name: Validate tag and build release
+    if: github.repository == 'msucharda/transcriber' && github.ref_type == 'tag'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate version and main ancestry
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . .\tools\Release.Common.ps1
+          Assert-ReleaseSource -Tag $env:RELEASE_TAG -ExpectedCommit $env:RELEASE_COMMIT
+          $version = Get-ReleaseVersion -Tag $env:RELEASE_TAG
+          "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM
+
+      - name: Test release helpers without external services
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\Test-ReleasePipeline.ps1
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore locked, audit, test, compile Bicep, and package
+        id: package
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\Publish-Release.ps1 -Version $env:RELEASE_VERSION `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts') `
+            -GitHubOutput $env:GITHUB_OUTPUT
+
+      - name: Upload this run's verified release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: ${{ steps.package.outputs.asset-directory }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish verified GitHub release
+    needs: build
+    if: github.repository == 'msucharda/transcriber' && github.ref_type == 'tag'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    environment: github-release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the same source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download only this run's release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: artifacts\incoming
+
+      - name: Create draft, upload, verify download, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: github.com
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\Publish-GitHubRelease.ps1 -Tag $env:RELEASE_TAG `
+            -ExpectedCommit $env:RELEASE_COMMIT `
+            -AssetDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts\incoming')
