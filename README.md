@@ -82,7 +82,7 @@ change after a check. Review the result before sending or executing it.
 Press **Ctrl+Shift+Space** to start paragraph A, again to stop it, and again to
 record B while A transcribes. There is one microphone capture and at most **one
 Speech request** at a time. **Two unfinished paragraphs total** are allowed,
-including recording, stopping, waiting, transcribing, failed, and undelivered
+including recording, stopping, waiting, transcribing, and undelivered
 work. This is not a long recording backlog or an interview mode.
 
 Capacity is reserved when recording is accepted. Stopping B while A is still
@@ -96,9 +96,16 @@ queue more toggles. Wait for **Listening** before speaking.
 The real volume bars and recording tray icon stay primary. When a previous
 paragraph is genuinely transcribing, the Listening pill also shows a subtle blue
 tint, a **Transcribing** label, and small moving dots on the right. Its completion
-does not reset the meter or hide a newer recording. Paused/error states are
+does not reset the meter or hide a newer recording. Paused delivery is
 static; Windows reduced-animation and high-contrast preferences are respected
 at startup. No completion sound is played into a recording.
+
+**If dictation fails:** a brief notification explains the failure, the failed
+paragraph is removed and its WAV is cleaned up, and its slot is immediately
+available again. There is no retry screen or failed-recording backlog. You can
+dictate again without restarting; an already recording or waiting paragraph
+continues normally. An empty transcript counts as a failure. Completed text
+awaiting safe delivery is different: it stays available for recovery below.
 
 **Order and separators:** accepted paragraphs are transcribed and delivered
 FIFO. Each one's destination is captured when you press to **stop** it, before
@@ -116,18 +123,16 @@ still exist and already be foreground, with keyboard modifiers released. A faile
 destination check, clipboard operation, or input operation pauses delivery and
 retains the result; later paragraphs cannot paste ahead of it. Already accepted
 audio may finish transcribing while delivery is paused, within the two-slot
-limit. Transcription failure blocks subsequent requests until retry or discard.
+limit. A failed transcription is removed without blocking subsequent requests.
 
 Right-click the tray icon:
 
 | Action | Effect |
 |---|---|
 | **Pause automatic delivery** | Keep results without any further automatic clipboard changes or paste attempts. |
-| **Copy ready paragraphs (pauses)** | Copy the consecutive ready results at the front as one block, separated by blank lines, regardless of their original targets. No leading blank line is added. Failed/not-yet-ready audio is not skipped. Work remains counted and automatic delivery stays paused. |
+| **Copy ready paragraphs (pauses)** | Copy the consecutive ready results at the front as one block, separated by blank lines, regardless of their original targets. No leading blank line is added. Not-yet-ready audio is not skipped. Work remains counted and automatic delivery stays paused. |
 | **I pasted the copied paragraphs** | After you paste manually, remove **only the last successfully copied snapshot**, not results completed afterward. This does not resume delivery. |
 | **Resume delivery in 3 seconds** | Explicitly re-enable delivery after a short delay to select the original field. It does not retarget or activate anything. Unacknowledged copied text must be acknowledged first. |
-| **Retry failed paragraph** | Retry its retained WAV once, in its original position. No automatic/endless retries. |
-| **Discard failed recording...** | Confirm deletion of that failed item; other work remains and delivery stays paused until you resume. |
 
 If copying fails, results remain available. Copying never authorizes automatic
 delivery to overwrite your clipboard before your manual paste. Acknowledging a
@@ -177,9 +182,9 @@ keys or enable local authentication to get around organizational policy.
 
 The app records a temporary 16 kHz mono WAV, sends it over HTTPS to your
 configured Azure Speech service, and puts the returned text on the Windows
-clipboard only for guarded delivery or explicit copy. Successful transcription
-deletes its WAV; failed transcription retains it for retry/discard while the app
-is running. Pending text exists only in memory until delivery, manual
+clipboard only for guarded delivery or explicit copy. Both successful and failed
+transcription clean up their WAV; failed recordings are not kept for retry.
+Pending text exists only in memory until delivery, manual
 acknowledgement, or exit. Abnormal termination or cleanup failure can leave a WAV.
 
 MAI's `clean` transcription style is enabled, and `locales` is intentionally

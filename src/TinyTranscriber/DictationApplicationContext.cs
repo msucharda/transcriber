@@ -19,8 +19,6 @@ internal sealed class DictationApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem copyItem = new("Copy ready paragraphs (pauses)");
     private readonly ToolStripMenuItem acknowledgeItem = new("I pasted the copied paragraphs");
     private readonly ToolStripMenuItem resumeItem = new("Resume delivery in 3 seconds");
-    private readonly ToolStripMenuItem retryItem = new("Retry failed paragraph");
-    private readonly ToolStripMenuItem discardItem = new("Discard failed recording...");
     private readonly ToolStripMenuItem exitItem = new("Exit");
     private AudioRecorder? activeRecorder;
     private volatile bool exiting;
@@ -41,28 +39,13 @@ internal sealed class DictationApplicationContext : ApplicationContext
         notifyIcon.ContextMenuStrip.Items.AddRange(
         [
             queueItem, new ToolStripSeparator(), pauseItem, copyItem, acknowledgeItem, resumeItem,
-            new ToolStripSeparator(), retryItem, discardItem, new ToolStripSeparator(), exitItem
+            new ToolStripSeparator(), exitItem
         ]);
 
         pauseItem.Click += (_, _) => { CancelResume(); queue.PauseDelivery(); };
         copyItem.Click += (_, _) => { CancelResume(); queue.CopyReadyParagraphs(); };
         acknowledgeItem.Click += (_, _) => { CancelResume(); queue.AcknowledgeCopiedParagraphs(); };
         resumeItem.Click += (_, _) => { resumeTimer.Start(); RefreshStatus(); };
-        retryItem.Click += (_, _) => queue.RetryFailedParagraph();
-        discardItem.Click += (_, _) =>
-        {
-            CancelResume();
-            queue.PauseDelivery();
-            if (MessageBox.Show(
-                "Delete the failed recording? This cannot be undone. Other paragraphs will stay paused.",
-                "Discard failed recording",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2) == DialogResult.Yes)
-            {
-                queue.DiscardFailedParagraph();
-            }
-        };
         exitItem.Click += (_, _) => ExitThread();
         resumeTimer.Tick += (_, _) =>
         {
@@ -184,8 +167,6 @@ internal sealed class DictationApplicationContext : ApplicationContext
         copyItem.Enabled = status.CanCopy;
         acknowledgeItem.Enabled = status.CanAcknowledgeCopy;
         resumeItem.Enabled = status.DeliveryPaused && !status.CanAcknowledgeCopy && !resumeTimer.Enabled;
-        retryItem.Enabled = status.HasFailure;
-        discardItem.Enabled = status.HasFailure;
         exitItem.Text = status.Unfinished > 0 ? "Exit (discard pending work)" : "Exit";
     }
 

@@ -26,9 +26,9 @@ Self-contained EXEs include a .NET runtime, so updating a separately installed
 - Microsoft Entra ID is the recommended authentication method. Deployment
   templates disable local/API-key authentication and assign an account-scoped
   role. Never commit credentials or include them in release assets.
-- The temporary WAV is not application-encrypted. Successful transcription
-  cleans it up; failed transcription in the next-version queue retains it for
-  explicit retry/discard until exit. A crash, forced termination, or disk/access
+- The temporary WAV is not application-encrypted. Successful and failed
+  transcription both clean it up; failed recordings are not kept for retry.
+  A crash, forced termination, or disk/access
   error can leave recordings behind. See [privacy guidance](docs/privacy.md).
 - Transcripts go through the Windows clipboard. Other software, clipboard
   history, and clipboard sync may access or retain them.

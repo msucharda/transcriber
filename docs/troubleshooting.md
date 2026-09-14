@@ -49,19 +49,23 @@ enabling API keys. HTTP 429 indicates service throttling/quota constraints.
 Shorter recordings and waiting before trying again may help, but do not fix
 missing permissions or unsupported regions.
 
-Failed transcriptions keep their WAV while this app instance runs. Correct the
-underlying problem, then use **Retry failed paragraph** from the tray for one
-explicit retry, or **Discard failed recording...** to delete it. Subsequent
-paragraphs do not transcribe ahead of a failed item. Retry can incur another
-Azure charge, including after a timeout with an uncertain server outcome.
-If transcription succeeded but deleting its WAV failed, retry attempts cleanup
-without sending that audio again.
+Failed transcriptions show a brief **Dictation failed** notification, clean up
+their WAV, and release their slot. There is no retry screen or failed item to
+clear. Press the shortcut to dictate again; any already recording or waiting
+paragraph continues normally. Correct the underlying service/permission problem
+if every attempt fails. A new recording makes a new paid request, and a timed-out
+previous request may still have incurred Azure charges.
+
+If deleting a WAV fails, the cleanup error is reported rather than blocking
+dictation. A valid transcript is still delivered normally; no second
+transcription request is made just to retry file cleanup.
 
 ## "Both paragraph slots are busy"
 
 The maximum is **two unfinished paragraphs including any recording**. One can
 be recorded while the previous one transcribes. If you stop B before A finishes,
-B waits and another C cannot start yet. Failed or paused work also counts.
+B waits and another C cannot start yet. Text awaiting paused delivery also counts;
+failed transcriptions are removed automatically.
 Your already accepted audio is retained. Wait for a slot or recover work from
 the tray; repeatedly pressing the shortcut cannot expand the backlog.
 
@@ -103,8 +107,8 @@ text may be on the clipboard without a paste; prior clipboard data is not restor
 
 Tray **Exit (discard pending work)** and terminal Ctrl+C cancel requests, discard
 pending in-memory text, and delete owned recordings. There is no save prompt,
-recording archive, or recovery on the next launch. Transcription failures retain
-audio only while running. A crash, force termination, or cleanup error can leave
+recording archive, or recovery on the next launch. Failed transcriptions clean up
+their audio immediately. A crash, force termination, or cleanup error can leave
 a WAV behind; see [privacy and cleanup guidance](privacy.md).
 
 ## Windows or your organization blocks the executable

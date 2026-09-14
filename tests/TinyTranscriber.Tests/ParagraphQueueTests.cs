@@ -190,60 +190,139 @@ public sealed class ParagraphQueueTests
     }
 
     [Fact]
-    public async Task FailedTranscriptionRetainsAudioAndBlocksLaterRequestsUntilRetry()
+    public async Task FailedTranscriptionReleasesSlotAndAutomaticallyProcessesNextParagraph()
     {
         await using var fixture = new Fixture();
         fixture.StartAndStop();
         fixture.StartAndStop();
         fixture.Requests[0].Fail();
-        await Until(() => fixture.Queue.Status.HasFailure);
-        Assert.Empty(fixture.Deleted);
-        Assert.Single(fixture.Requests);
-        Assert.Equal(HotkeyResult.Full, fixture.Press());
-        fixture.Queue.RetryFailedParagraph();
         await Until(() => fixture.Requests.Count == 2);
-        Assert.Equal("clip-1", fixture.Requests[1].Path);
-        fixture.Requests[1].Complete("Recovered.");
-        await Until(() => fixture.Requests.Count == 3);
-        fixture.Requests[2].Complete("Next.");
-        await Until(() => fixture.Queue.Status.Unfinished == 0);
-        Assert.Equal(["Recovered.", "\r\n\r\nNext."], fixture.Delivery.Pastes.Select(paste => paste.Text));
-    }
-
-    [Fact]
-    public async Task DiscardDeletesOnlyFailedClipAndKeepsLaterDeliveryPaused()
-    {
-        await using var fixture = new Fixture();
-        fixture.StartAndStop();
-        fixture.StartAndStop();
-        fixture.Requests[0].Fail();
-        await Until(() => fixture.Queue.Status.HasFailure);
-        fixture.Queue.DiscardFailedParagraph();
         Assert.Equal(["clip-1"], fixture.Deleted);
-        await Until(() => fixture.Requests.Count == 2);
+        Assert.Equal(1, fixture.Queue.Status.Unfinished);
+        Assert.False(fixture.Queue.Status.DeliveryPaused);
+        Assert.Equal("original clipboard", fixture.Delivery.Clipboard);
+        Assert.Contains("You can record again.", Assert.Single(fixture.Errors));
+        Assert.Equal("clip-2", fixture.Requests[1].Path);
         fixture.Requests[1].Complete("Next.");
-        await Until(() => fixture.Queue.Status.CanCopy);
-        Assert.True(fixture.Queue.Status.DeliveryPaused);
-        Assert.Empty(fixture.Delivery.Pastes);
-        fixture.Queue.ResumeDelivery();
         await Until(() => fixture.Queue.Status.Unfinished == 0);
         Assert.Equal("Next.", Assert.Single(fixture.Delivery.Pastes).Text);
+        Assert.Equal(1, fixture.MaxRequests);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
     }
 
     [Fact]
-    public async Task CleanupFailureRetainsSlotAndRetryDoesNotRetranscribe()
+    public async Task RepeatedFailedDictationsReturnToReadyWithoutRestartOrClipboardChanges()
+    {
+        await using var fixture = new Fixture();
+        fixture.StartAndStop();
+        fixture.StartAndStop();
+        fixture.Requests[0].Fail();
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Requests[1].Fail();
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(["clip-1", "clip-2"], fixture.Deleted);
+        Assert.Equal(2, fixture.Errors.Count);
+        Assert.False(fixture.Queue.Status.DeliveryPaused);
+        Assert.False(DictationPresentation.From(fixture.Queue.Status, "Ctrl+Shift+Space").Visible);
+        Assert.Empty(fixture.Delivery.Pastes);
+        Assert.Equal("original clipboard", fixture.Delivery.Clipboard);
+        fixture.StartAndStop();
+        fixture.Requests[2].Complete("Fresh dictation.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal("Fresh dictation.", Assert.Single(fixture.Delivery.Pastes).Text);
+    }
+
+    [Fact]
+    public async Task CleanupFailureIsReportedWithoutBlockingValidTextOrNewRecording()
     {
         await using var fixture = new Fixture { FailDelete = true };
         fixture.StartAndStop();
         fixture.Requests[0].Complete("One.");
-        await Until(() => fixture.Queue.Status.HasFailure);
-        Assert.Equal(1, fixture.Queue.Status.Unfinished);
-        Assert.Empty(fixture.Delivery.Pastes);
-        fixture.FailDelete = false;
-        fixture.Queue.RetryFailedParagraph();
         await Until(() => fixture.Queue.Status.Unfinished == 0);
         Assert.Single(fixture.Requests);
+        Assert.Equal("One.", Assert.Single(fixture.Delivery.Pastes).Text);
+        Assert.Contains("Recording cleanup failed", Assert.Single(fixture.Errors));
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+    }
+
+    [Fact]
+    public async Task FailedBackgroundTranscriptionDoesNotInterruptNewerRecording()
+    {
+        await using var fixture = new Fixture();
+        fixture.StartAndStop();
+        fixture.Press();
+        fixture.Requests[0].Fail();
+        await Until(() => fixture.Errors.Count == 1);
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        Assert.False(fixture.Recorders[1].Disposed);
+        Assert.Equal(1, fixture.Queue.Status.Unfinished);
+        var presentation = DictationPresentation.From(fixture.Queue.Status, "Ctrl+Shift+Space");
+        Assert.True(presentation.Recording);
+        Assert.False(presentation.BackgroundTranscription);
         Assert.Equal(["clip-1"], fixture.Deleted);
+        fixture.Press();
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Requests[1].Complete("Still recording.");
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \r\n ")]
+    public async Task EmptyTranscriptFreesItsSlotAndNotifiesUser(string text)
+    {
+        await using var fixture = new Fixture();
+        fixture.StartAndStop();
+        fixture.Requests[0].Complete(text);
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Contains("No speech was recognized.", Assert.Single(fixture.Errors));
+        Assert.Equal(["clip-1"], fixture.Deleted);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+        Assert.Equal("original clipboard", fixture.Delivery.Clipboard);
+    }
+
+    [Fact]
+    public async Task RequestTimeoutIsANonblockingFailureNotAppShutdown()
+    {
+        await using var fixture = new Fixture();
+        fixture.StartAndStop();
+        fixture.Requests[0].Completion.SetCanceled();
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Single(fixture.Errors);
+        Assert.Equal(["clip-1"], fixture.Deleted);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+    }
+
+    [Fact]
+    public async Task FailedLaterParagraphPreservesEarlierCopiedTextAndItsPause()
+    {
+        await using var fixture = new Fixture();
+        fixture.Queue.PauseDelivery();
+        fixture.StartAndStop();
+        fixture.StartAndStop();
+        fixture.Requests[0].Complete("Keep this.");
+        await Until(() => fixture.Requests.Count == 2);
+        fixture.Queue.CopyReadyParagraphs();
+        fixture.Requests[1].Fail();
+        await Until(() => fixture.Errors.Count == 1);
+        Assert.Equal("Keep this.", fixture.Delivery.Clipboard);
+        Assert.True(fixture.Queue.Status.CanAcknowledgeCopy);
+        Assert.True(fixture.Queue.Status.DeliveryPaused);
+        Assert.Equal(1, fixture.Queue.Status.Unfinished);
+        Assert.Equal(["clip-1", "clip-2"], fixture.Deleted);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+    }
+
+    [Fact]
+    public async Task FailedTranscriptionWithCleanupErrorStillReleasesCapacity()
+    {
+        await using var fixture = new Fixture { FailDelete = true };
+        fixture.StartAndStop();
+        fixture.Requests[0].Fail();
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(2, fixture.Errors.Count);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+        Assert.Empty(fixture.Delivery.Pastes);
     }
 
     [Fact]

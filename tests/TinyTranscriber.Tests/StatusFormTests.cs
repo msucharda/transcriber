@@ -10,13 +10,12 @@ public sealed class StatusFormTests
     private const string Shortcut = "Ctrl+Shift+Space";
 
     [Fact]
-    public void RecordingRemainsPrimaryWhenBackgroundTranscriptionFinishesOrFails()
+    public void RecordingRemainsPrimaryWhenBackgroundTranscriptionEnds()
     {
         var status = Status(MicrophoneState.Recording, transcribing: true);
         var before = DictationPresentation.From(status, Shortcut);
         var after = DictationPresentation.From(status with { IsTranscribing = false }, Shortcut);
-        var failed = DictationPresentation.From(status with { IsTranscribing = false, HasFailure = true }, Shortcut);
-        Assert.All(new[] { before, after, failed }, presentation =>
+        Assert.All(new[] { before, after }, presentation =>
         {
             Assert.True(presentation.Recording);
             Assert.True(presentation.Visible);
@@ -25,17 +24,15 @@ public sealed class StatusFormTests
         });
         Assert.True(before.BackgroundTranscription);
         Assert.False(after.BackgroundTranscription);
-        Assert.False(failed.BackgroundTranscription);
     }
 
     [Fact]
-    public void PausedAndFailedStatesNeverPretendToBeActivelyProcessing()
+    public void PausedStatesNeverPretendToBeActivelyProcessing()
     {
         var status = Status(transcribing: true);
         foreach (var blocked in new[]
         {
             status with { DeliveryPaused = true },
-            status with { HasFailure = true },
             status with { Microphone = MicrophoneState.Recording, DeliveryPaused = true }
         })
         {
@@ -119,10 +116,10 @@ public sealed class StatusFormTests
             {
                 Status(MicrophoneState.Recording, unfinished: 1),
                 Status(MicrophoneState.Recording, transcribing: true),
-                Status(MicrophoneState.Recording) with { HasFailure = true },
+                Status(MicrophoneState.Recording) with { DeliveryPaused = true },
                 Status(transcribing: true),
                 Status() with { DeliveryPaused = true },
-                Status() with { HasFailure = true },
+                Status() with { DeliveryPaused = true, CanAcknowledgeCopy = true },
                 Status(MicrophoneState.Stopping) with { StartPending = true },
                 Status(transcribing: true, unfinished: 1)
             };
@@ -189,7 +186,7 @@ public sealed class StatusFormTests
 
     private static ParagraphQueueStatus Status(
         MicrophoneState microphone = MicrophoneState.Idle, bool transcribing = false, int unfinished = 2) =>
-        new(microphone, unfinished, 2, transcribing, false, false, false, false, false);
+        new(microphone, unfinished, 2, transcribing, false, false, false, false);
 
     private static T Field<T>(object target, string name) => (T)target.GetType()
         .GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target)!;

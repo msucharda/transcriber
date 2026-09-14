@@ -22,13 +22,14 @@ published v0.1.0 binary.
    and pauses delivery; ordered text stays in memory for tray recovery.
    Explicit **Copy ready paragraphs (pauses)** also replaces the clipboard and
    keeps delivery paused until acknowledgement and explicit resume.
-5. Successful transcription deletes its WAV. A transcription failure retains
-   the owned WAV for explicit retry or discard, blocking later requests.
-   Clipboard/input failure retains the text rather than silently dropping it.
-   These items continue to occupy the two available slots.
+5. Successful and failed transcription both clean up the owned WAV. A failed
+   paragraph is reported and removed, freeing its slot for new dictation without
+   retry or restarting the app. Clipboard/input failure instead retains the
+   completed text rather than silently dropping it; that pending text continues
+   to occupy a slot.
 6. **Exit** and console Ctrl+C cancel work and clean up only this instance's
    owned files after pending requests release their streams. Pending text,
-   failed clips, and recordings are not recoverable after exit. There is no
+   and recordings are not recoverable after exit. There is no
    saved queue, transcript database, automatic retry, or application analytics.
 
 ## Important limits
@@ -44,8 +45,8 @@ published v0.1.0 binary.
 - **Local audio:** WAV files are not encrypted by the app. User-profile/temp
   permissions and device encryption are OS protections, not app guarantees.
   A crash, forced stop, or cleanup failure can leave a WAV in `%TEMP%`.
-  Failed transcription deliberately extends its lifetime until you retry,
-  discard, or exit; there is no automatic expiration while the app runs.
+  Cleanup failures are reported and can leave a WAV even though the paragraph
+  no longer occupies a slot. Failed recordings are not intentionally archived.
   Inspect only files with this app's `tiny-transcriber-` prefix when cleaning up;
   do not delete your entire temporary directory.
 - **Clipboard:** Windows clipboard history, cross-device sync, remote-desktop

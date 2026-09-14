@@ -36,7 +36,6 @@ internal sealed record ParagraphQueueStatus(
     int Capacity,
     bool IsTranscribing,
     bool DeliveryPaused,
-    bool HasFailure,
     bool CanCopy,
     bool CanAcknowledgeCopy,
     bool StartPending);
@@ -86,7 +85,6 @@ internal sealed class ParagraphQueue(
         capacity,
         paragraphs.Any(item => item.Stage == Stage.Transcribing),
         paused,
-        paragraphs.Any(item => item.Stage == Stage.Failed),
         paragraphs.FirstOrDefault()?.Stage == Stage.Ready,
         copied.Length > 0,
         nextRecording is not null);
@@ -204,49 +202,6 @@ internal sealed class ParagraphQueue(
         Pump();
     }
 
-    public void RetryFailedParagraph()
-    {
-        if (exiting)
-        {
-            return;
-        }
-
-        var item = paragraphs.FirstOrDefault(item => item.Stage == Stage.Failed);
-        if (item is not null)
-        {
-            item.Stage = Stage.Queued;
-            Notify();
-            Pump();
-        }
-    }
-
-    public void DiscardFailedParagraph()
-    {
-        if (exiting)
-        {
-            return;
-        }
-
-        var item = paragraphs.FirstOrDefault(item => item.Stage == Stage.Failed);
-        if (item is null)
-        {
-            return;
-        }
-
-        PauseDelivery();
-        try
-        {
-            DeleteAudio(item);
-            paragraphs.Remove(item);
-            Notify();
-            Pump();
-        }
-        catch (Exception exception)
-        {
-            Report("Could not discard recording", exception);
-        }
-    }
-
     public Task ShutdownAsync() => shutdownTask ??= ShutdownCoreAsync();
 
     private bool StartRecording(Paragraph item)
@@ -341,13 +296,9 @@ internal sealed class ParagraphQueue(
 
                 try
                 {
-                    // A cleanup failure retries deletion, not a paid transcription.
-                    if (item.Text is null)
-                    {
-                        item.Stage = Stage.Transcribing;
-                        Notify();
-                        item.Text = await transcribe(item.AudioPath!, shutdown.Token);
-                    }
+                    item.Stage = Stage.Transcribing;
+                    Notify();
+                    item.Text = await transcribe(item.AudioPath!, shutdown.Token);
 
                     if (exiting)
                     {
@@ -356,28 +307,30 @@ internal sealed class ParagraphQueue(
 
                     if (string.IsNullOrWhiteSpace(item.Text))
                     {
-                        item.Text = null;
-                        throw new InvalidOperationException("No speech was recognized. Retry or discard the recording.");
+                        throw new InvalidOperationException("No speech was recognized.");
                     }
-
-                    DeleteAudio(item);
-                    item.Stage = Stage.Ready;
                 }
                 catch (Exception exception)
                 {
-                    if (!exiting)
+                    if (exiting)
                     {
-                        item.Stage = Stage.Failed;
-                        Report("Paragraph processing failed", exception);
+                        break;
                     }
 
-                    break;
+                    paragraphs.Remove(item);
+                    CleanupAudio(item);
+                    Report("Dictation failed", new InvalidOperationException(
+                        $"This paragraph was not transcribed. You can record again.\n{exception.Message}", exception));
+                    continue;
                 }
                 finally
                 {
                     Notify();
                 }
 
+                CleanupAudio(item);
+                item.Stage = Stage.Ready;
+                Notify();
                 if (!delivering && !paused)
                 {
                     delivering = true;
@@ -458,14 +411,7 @@ internal sealed class ParagraphQueue(
         await Task.WhenAll(stoppingTask, processingTask, deliveryTask);
         foreach (var item in paragraphs)
         {
-            try
-            {
-                DeleteAudio(item);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                Console.Error.WriteLine($"Could not delete owned temporary recording {item.AudioPath}: {exception.Message}");
-            }
+            CleanupAudio(item);
         }
 
         paragraphs.Clear();
@@ -495,12 +441,21 @@ internal sealed class ParagraphQueue(
         }
     }
 
-    private void DeleteAudio(Paragraph item)
+    private void CleanupAudio(Paragraph item)
     {
         if (item.AudioPath is not null)
         {
-            deleteClip(item.AudioPath);
-            item.AudioPath = null;
+            try
+            {
+                deleteClip(item.AudioPath);
+                item.AudioPath = null;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                var message = $"Could not delete owned temporary recording {item.AudioPath}: {exception.Message}";
+                Console.Error.WriteLine(message);
+                Report("Recording cleanup failed", new IOException(message, exception));
+            }
         }
     }
 
@@ -520,7 +475,7 @@ internal sealed class ParagraphQueue(
         }
     }
 
-    private enum Stage { Reserved, Recording, Stopping, Queued, Transcribing, Failed, Ready }
+    private enum Stage { Reserved, Recording, Stopping, Queued, Transcribing, Ready }
 
     private sealed class Paragraph(long burst)
     {
