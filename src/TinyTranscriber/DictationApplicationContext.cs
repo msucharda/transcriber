@@ -185,7 +185,7 @@ internal sealed class DictationApplicationContext : ApplicationContext
         if (result == HotkeyResult.Full)
         {
             ShowMessage(
-                "Both paragraph slots are busy",
+                $"All {queue.Status.Capacity} dictation slots are busy",
                 "Wait for a paragraph to finish, or recover pending work from the tray. Your accepted audio is kept.",
                 ToolTipIcon.Info);
         }

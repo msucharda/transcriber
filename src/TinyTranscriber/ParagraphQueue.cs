@@ -48,7 +48,7 @@ internal sealed class ParagraphQueue(
     Action<string> deleteClip,
     int capacity = ParagraphQueue.DefaultCapacity)
 {
-    public const int DefaultCapacity = 2;
+    public const int DefaultCapacity = 5;
     private string separator = DictationPreferences.Default.SeparatorText;
     private readonly int capacity = capacity > 0
         ? capacity

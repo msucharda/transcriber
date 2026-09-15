@@ -60,11 +60,12 @@ If deleting a WAV fails, the cleanup error is reported rather than blocking
 dictation. A valid transcript is still delivered normally; no second
 transcription request is made just to retry file cleanup.
 
-## "Both paragraph slots are busy"
+## "All 5 dictation slots are busy"
 
-The maximum is **two unfinished paragraphs including any recording**. One can
-be recorded while the previous one transcribes. If you stop B before A finishes,
-B waits and another C cannot start yet. Text awaiting paused delivery also counts;
+The maximum is **five unfinished dictations including any recording**. You can
+record B through E while A is still transcribing; stopped recordings wait in
+order. Stopping an accepted recording always succeeds, but a sixth cannot start
+until a slot is free. Text awaiting paused delivery also counts;
 failed transcriptions are removed automatically.
 Your already accepted audio is retained. Wait for a slot or recover work from
 the tray; repeatedly pressing the shortcut cannot expand the backlog.

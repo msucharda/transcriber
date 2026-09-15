@@ -6,12 +6,12 @@ press the shortcut again, or release the main shortcut key in push-to-talk mode.
 While the shortcut is held, the app checks that key's pressed state; it does not
 record typed text or install a keyboard-logging hook.
 
-This describes the next-version source's two-paragraph workflow, not the
+This describes the next-version source's queued dictation workflow, not the
 published v0.1.0 binary.
 
 1. Audio is recorded as a 16 kHz, 16-bit, mono WAV in your Windows temporary
    directory, with a name like `tiny-transcriber-<random-id>.wav`.
-2. At most two unfinished paragraphs are kept, counting the active recording.
+2. At most five unfinished dictations are kept, counting the active recording.
    A stopped WAV may wait for the previous request. Only one WAV at a time is
    sent over HTTPS to the Azure Speech endpoint you configured.
    Microsoft Entra ID supplies a Cognitive Services access token. If you

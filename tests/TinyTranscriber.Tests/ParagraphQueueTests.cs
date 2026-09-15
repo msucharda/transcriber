@@ -7,7 +7,7 @@ public sealed class ParagraphQueueTests
     [Fact]
     public async Task RecordingOverlapsNetworkButRequestsAndDeliveryStayFifo()
     {
-        await using var fixture = new Fixture();
+        await using var fixture = new Fixture(2);
         fixture.StartAndStop();
         await Until(() => fixture.Requests.Count == 1);
 
@@ -104,7 +104,7 @@ public sealed class ParagraphQueueTests
     [Fact]
     public async Task FailedDeliveryKeepsOrderedResultsAndClipboardUntilExplicitRecovery()
     {
-        await using var fixture = new Fixture();
+        await using var fixture = new Fixture(2);
         fixture.Delivery.AllowPaste = false;
         fixture.StartAndStop();
         fixture.StartAndStop();
@@ -392,7 +392,7 @@ public sealed class ParagraphQueueTests
         await using var fixture = new Fixture(1);
         fixture.StartAndStop();
         Assert.Equal(HotkeyResult.Full, fixture.Press());
-        Assert.Equal(2, ParagraphQueue.DefaultCapacity);
+        Assert.Equal(5, ParagraphQueue.DefaultCapacity);
         Assert.Throws<ArgumentOutOfRangeException>(() => new Fixture(0));
     }
 
@@ -493,7 +493,7 @@ public sealed class ParagraphQueueTests
     [Fact]
     public async Task PushToTalkCanOverlapTranscriptionWithoutDroppingAnAcceptedClip()
     {
-        await using var fixture = new Fixture();
+        await using var fixture = new Fixture(2);
         var input = new DictationHotkeyController(fixture.Queue, () => Target) { Mode = RecordingMode.PushToTalk };
         input.Press();
         input.Release();
@@ -578,6 +578,94 @@ public sealed class ParagraphQueueTests
         await fixture.Queue.ShutdownAsync();
         input.Release();
         Assert.Empty(fixture.Requests);
+        Assert.Empty(fixture.Errors);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FiveSlotsIncludeRecordingAndRejectOnlyNewWorkAtCapacity(bool pushToTalk)
+    {
+        await using var fixture = new Fixture();
+        var mode = pushToTalk ? RecordingMode.PushToTalk : RecordingMode.Toggle;
+        var input = new DictationHotkeyController(fixture.Queue, () => Target) { Mode = mode };
+        void Stop()
+        {
+            if (mode == RecordingMode.PushToTalk) { input.Release(); }
+            else { Assert.Equal(HotkeyResult.Stopping, input.Press()); }
+        }
+
+        for (var index = 0; index < 4; index++)
+        {
+            Assert.Equal(HotkeyResult.Started, input.Press());
+            Stop();
+        }
+
+        Assert.Equal(HotkeyResult.Started, input.Press());
+        Assert.Equal(5, fixture.Queue.Status.Capacity);
+        Assert.Equal(5, fixture.Queue.Status.Unfinished);
+        Assert.Equal(MicrophoneState.Recording, fixture.Queue.Status.Microphone);
+        Assert.Single(fixture.Requests);
+        Assert.True(fixture.Queue.Status.IsTranscribing);
+        Stop();
+        Assert.Equal(HotkeyResult.Full, input.Press());
+        input.Release();
+        Assert.Equal(5, fixture.Recorders.Count);
+        Assert.Empty(fixture.Deleted);
+        Assert.Equal("5/5 occupied - waiting for a slot",
+            DictationPresentation.From(fixture.Queue.Status, "Ctrl+Shift+Space").Detail);
+
+        fixture.Requests[0].Complete("First.");
+        await Until(() => fixture.Queue.Status.Unfinished == 4);
+        Assert.Equal(HotkeyResult.Started, input.Press());
+        Stop();
+        for (var index = 1; index < 6; index++)
+        {
+            await Until(() => fixture.Requests.Count == index + 1);
+            fixture.Requests[index].Complete($"Text {index + 1}.");
+        }
+
+        await Until(() => fixture.Queue.Status.Unfinished == 0);
+        Assert.Equal(["First.", " Text 2.", " Text 3.", " Text 4.", " Text 5.", " Text 6."],
+            fixture.Delivery.Pastes.Select(paste => paste.Text));
+        Assert.Equal(Enumerable.Range(1, 6).Select(index => $"clip-{index}"), fixture.Deleted);
+        Assert.Equal(1, fixture.MaxRequests);
+    }
+
+    [Fact]
+    public async Task FivePausedResultsKeepCapacityOccupiedUntilCopiedAndAcknowledged()
+    {
+        await using var fixture = new Fixture();
+        fixture.Queue.PauseDelivery();
+        for (var index = 0; index < 5; index++) { fixture.StartAndStop(); }
+        for (var index = 0; index < 5; index++)
+        {
+            await Until(() => fixture.Requests.Count == index + 1);
+            fixture.Requests[index].Complete($"Text {index + 1}.");
+        }
+
+        await Until(() => !fixture.Queue.Status.IsTranscribing);
+        Assert.Equal(HotkeyResult.Full, fixture.Press());
+        Assert.Equal("original clipboard", fixture.Delivery.Clipboard);
+        Assert.Empty(fixture.Delivery.Pastes);
+        fixture.Queue.CopyReadyParagraphs();
+        Assert.Equal("Text 1. Text 2. Text 3. Text 4. Text 5.", fixture.Delivery.Clipboard);
+        Assert.Equal(HotkeyResult.Full, fixture.Press());
+        fixture.Queue.AcknowledgeCopiedParagraphs();
+        Assert.Equal(0, fixture.Queue.Status.Unfinished);
+        Assert.True(fixture.Queue.Status.DeliveryPaused);
+        Assert.Equal(HotkeyResult.Started, fixture.Press());
+    }
+
+    [Fact]
+    public async Task ShutdownCleansAllFiveOwnedClipsWithoutStartingWaitingRequests()
+    {
+        await using var fixture = new Fixture();
+        for (var index = 0; index < 5; index++) { fixture.StartAndStop(); }
+        await fixture.Queue.ShutdownAsync();
+        Assert.Single(fixture.Requests);
+        Assert.Equal(Enumerable.Range(1, 5).Select(index => $"clip-{index}"), fixture.Deleted);
+        Assert.Empty(fixture.Delivery.Pastes);
         Assert.Empty(fixture.Errors);
     }
 

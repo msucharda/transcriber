@@ -83,14 +83,16 @@ Press **Ctrl+Shift+Space** to start paragraph A, again to stop it, and again to
 record B while A transcribes (the default toggle mode). **Settings** also offers
 push-to-talk: hold the shortcut to record and release its main key to transcribe.
 There is one microphone capture and at most **one
-Speech request** at a time. **Two unfinished paragraphs total** are allowed,
+Speech request** at a time. **Five unfinished dictations total** are allowed,
 including recording, stopping, waiting, transcribing, and undelivered
 work. This is not a long recording backlog or an interview mode.
 
-Capacity is reserved when recording is accepted. Stopping B while A is still
-busy always keeps B as the single waiting paragraph. A new C is refused with a
-visible waiting notification until a slot becomes free; accepted audio is never
-dropped to make room. If you press again during the brief microphone-stopping
+Capacity is reserved when recording is accepted. While A transcribes, you can
+record B, C, D, and E; stopped recordings wait their turn in order. Stopping an
+accepted recording is always allowed, even when all five slots are occupied.
+A sixth dictation is refused with a visible waiting notification until a slot
+becomes free; accepted audio is never dropped to make room.
+If you press again during the brief microphone-stopping
 transition, one next recording is reserved when capacity permits and starts
 when the device is released. Further presses during that transition do not
 queue more toggles. Wait for **Listening** before speaking. In push-to-talk
@@ -130,7 +132,7 @@ waits without changing the clipboard; **Ready to insert** reminds you to release
 the keys. Holding a push-to-talk chord is not a failed delivery. A failed
 destination check, clipboard operation, or input operation pauses delivery and
 retains the result; later paragraphs cannot paste ahead of it. Already accepted
-audio may finish transcribing while delivery is paused, within the two-slot
+audio may finish transcribing while delivery is paused, within the five-slot
 limit. A failed transcription is removed without blocking subsequent requests.
 
 Right-click the tray icon:
@@ -184,7 +186,7 @@ capture while Space remains held. With a custom shortcut, its main key replaces
 Space. Release detection checks that key about every 15 ms while held; UI
 scheduling can add latency. Audio submission starts on release independently
 of keyboard modifiers, but automatic insertion waits until those modifiers are
-also released. The two-slot limit and single-request ordering still apply.
+also released. The five-slot limit and single-request ordering still apply.
 
 Settings can stay open while you use another app. Finish any active recording
 before saving a mode change; **Save** is disabled during microphone capture or
